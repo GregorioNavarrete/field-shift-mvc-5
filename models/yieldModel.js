@@ -187,14 +187,17 @@ const sum = (arr, f) => arr.reduce((a, x) => a + f(x), 0);
 function groupBlocks(timeline) {
   const blocks = [];
   timeline.forEach((m, idx) => {
-    const cls = classifyLabel(m.cropLabel, m.cropId);
+    const cls = m.isInitialClosure ? { type: 'closing', id: 'init' } : classifyLabel(m.cropLabel, m.cropId);
     const key = `${cls.type}:${cls.id}`;
     const last = blocks[blocks.length - 1];
     if (last && last.key === key) last.months.push(m);
     else blocks.push({ key, type: cls.type, id: cls.id, startIndex: idx, months: [m] });
   });
-  // El mes 0 corresponde al estado inicial / cierre del cultivo de partida: no se evalúa como campaña nueva.
-  blocks.forEach((b) => { b.closing = b.startIndex === 0; });
+  // Los meses iniciales de cierre previo no se evalúan como campaña nueva de la rotación.
+  const hasExplicitClosure = timeline.some((m) => m.isInitialClosure);
+  blocks.forEach((b) => {
+    b.closing = b.type === 'closing' || (!hasExplicitClosure && b.startIndex === 0);
+  });
   return blocks;
 }
 
@@ -251,24 +254,30 @@ function analyzeTimeline(timeline, ctx) {
 
     const potential = ypot && ypot[b.id] ? ypot[b.id] : p.ypotDefault;
     const perYear = potential * yf;
-    const totalYield = b.id === 'alfalfa' ? perYear * (b.months.length / 12) : perYear;
+    const isCompleteSeason = b.id === 'alfalfa' || b.months.length >= 4;
+    const seasonFrac = b.id === 'alfalfa'
+      ? (b.months.length / 12)
+      : (b.months.length >= 5 ? 1 : (b.months.length / 6) * 0.65);
+    const totalYield = perYear * seasonFrac;
     biomass += b.id === 'alfalfa' ? totalYield : totalYield / p.hi;
 
-    seasons.push({
-      cropId: b.id,
-      label: b.months[0].cropLabel,
-      months: b.months.length,
-      etcMm: Math.round(etc),
-      etaMm: Math.round(eta),
-      waterRatio: Number(ratio.toFixed(3)),
-      yieldFracWater: Number(yfWater.toFixed(3)),
-      hotDaysFlowering: Number(hotDays.toFixed(1)),
-      heatLoss: Number(heatLoss.toFixed(3)),
-      frostDays: Number(frostDays.toFixed(1)),
-      frostLoss: Number(frostLoss.toFixed(3)),
-      yieldFrac: Number(yf.toFixed(3)),
-      yieldKgHa: Math.round(perYear)
-    });
+    if (isCompleteSeason) {
+      seasons.push({
+        cropId: b.id,
+        label: b.months[0].cropLabel,
+        months: b.months.length,
+        etcMm: Math.round(etc),
+        etaMm: Math.round(eta),
+        waterRatio: Number(ratio.toFixed(3)),
+        yieldFracWater: Number(yfWater.toFixed(3)),
+        hotDaysFlowering: Number(hotDays.toFixed(1)),
+        heatLoss: Number(heatLoss.toFixed(3)),
+        frostDays: Number(frostDays.toFixed(1)),
+        frostLoss: Number(frostLoss.toFixed(3)),
+        yieldFrac: Number(yf.toFixed(3)),
+        yieldKgHa: Math.round(perYear)
+      });
+    }
   });
 
   const safeYears = Math.max(1, years || 1);
@@ -302,14 +311,18 @@ function analyzeTimeline(timeline, ctx) {
 /** Calibra Ypot por cultivo para reproducir el rinde medio histórico MAGyP del partido. */
 function calibrateYpot(referenceSeasons, magyp) {
   const stats = (magyp && magyp.cultivos) || [];
+  const isLocalMagyp = !magyp || magyp.es_local !== false;
   const ypot = {};
   const info = {};
   Object.entries(CROP_PARAMS).forEach(([id, p]) => {
     const own = referenceSeasons.filter((s) => s.cropId === id && p.calib && s.label.startsWith(p.calib));
-    const hist = p.magyp ? stats.find((c) => c.nombre === p.magyp) : null;
+    const hist = isLocalMagyp && p.magyp ? stats.find((c) => c.nombre === p.magyp) : null;
     if (!own.length || !hist) {
       ypot[id] = p.ypotDefault;
-      info[id] = { origen: 'valor por defecto (supuesto)', ypotKgHa: p.ypotDefault };
+      info[id] = {
+        origen: isLocalMagyp ? 'valor por defecto (supuesto)' : 'referencia FAO-33 (fuera de jurisdicción MAGyP)',
+        ypotKgHa: p.ypotDefault
+      };
       return;
     }
     const meanYf = sum(own, (s) => s.yieldFrac) / own.length;

@@ -6,7 +6,7 @@
  *  - Ciclos flexibles de 1 a 6 años (12 a 72 meses)
  *  - Constructor e interfaz completa de estrategias en el Paso 2 con condiciones iniciales propias
  *  - Modo Oscuro persistente (incluyendo ejes y grillas Chart.js)
- *  - Sistema integral de Popups explicativos en lenguaje simple + ecuaciones Caja Blanca
+ *  - Sistema integral de Popups explicativos + ecuaciones matematicas utilizadas
  */
 
 const APP_DATA = window.__INITIAL_DATA__;
@@ -20,9 +20,13 @@ const CLIENT_STATE = {
   lon: APP_DATA.params.lon,
   areaM2: APP_DATA.params.areaM2,
   areaHa: APP_DATA.params.areaM2 / 10000,
-  meanNdvi: 0.68,
+  meanNdvi: APP_DATA.envContext?.satellite?.meanNdvi ?? 0.33,
   showNdviOverlay: true,
   showNdviNumbers: true,
+  satelliteData: APP_DATA.envContext?.satellite || null,
+  satFetching: false,
+  satLastBboxKey: '',
+  satDebounceTimer: null,
   selectedStrategyId: APP_DATA.simulation.strategies[1]?.id || APP_DATA.simulation.strategies[0].id,
   selectedMonthIndex: 7,
   isLocalOverride: false,
@@ -34,7 +38,8 @@ const CLIENT_STATE = {
   editingStrategyId: null,
   playbackTimer: null,
   seenTutorials: {},
-  tutorialState: { active: false, step: 0, idx: 0, timer: null }
+  chartGuideExpanded: true,
+  tutorialState: { active: false, paused: false, step: 0, idx: 0, timer: null }
 };
 
 let map, polygonLayer, ndviLayerGroup, ndviLabelsGroup, vertexMarkers = [];
@@ -42,28 +47,38 @@ let currentLatLngs = [];
 let timelineChartInstance = null;
 let rankingChartInstance = null;
 
+function formatCoords(lat, lon, isEs = CLIENT_STATE.lang === 'es') {
+  const latH = lat >= 0 ? 'N' : 'S';
+  const lonH = lon >= 0 ? 'E' : (isEs ? 'O' : 'W');
+  return `${Math.abs(lat).toFixed(6)}° ${latH}, ${Math.abs(lon).toFixed(6)}° ${lonH}`;
+}
+
 /* ==========================================================================
    1. DICCIONARIO BILINGÜE COMPLETO (ESPAÑOL / INGLÉS)
    ========================================================================== */
 const I18N = {
   es: {
-    mq_1: '✓ NASA Space Apps 2026 — Field Shift v4.0 (FAO-56 · FAO-33 · MCDA)',
-    mq_2: '✓ NASA POWER Serie Diaria + SoilGrids Q0.05–Q0.95 + INTA SIGA + Sentinel-2 NDVI',
+    mq_1: '✓ NASA Space Apps 2026 — Field Shift v5.0 (FAO-56 · FAO-33 · MCDA)',
+    mq_2: '✓ Planetary Computer Sentinel-2 L2A + NASA POWER + SoilGrids 5 Profundidades',
     mq_3: '✓ Filtro Aptitud · Auditoría SAW-15 · TOPSIS-15 · Monte Carlo (N=10.000)',
     mq_4: '✓ Licencia Abierta Apache 2.0 — Ciclos 1 a 6 Años & Mini-Tutorial Interactivo',
-    hdr_ready: 'Listo para iniciar cálculo',
+    hdr_ready: 'Version 5.0 · 2026',
     hdr_step_prefix: 'Paso',
     hdr_of: 'de 4',
     btn_tour_hdr: 'Tutorial',
-    btn_mini_tut: 'Mini-tutorial del paso',
+    btn_mini_tut: 'Mini-tutorial paso',
     pt_skip: 'Saltar tutorial ✕',
+    pt_pause: 'Pausar',
+    pt_resume: 'Reanudar',
+    pt_paused_badge: '⏸ Pausado',
     pt_next: 'Siguiente ▶',
     pt_finish: 'Listo ✓',
+    btn_sat_detect: 'Detectar satélite en lote',
     btn_guide_hdr: '📘 Guía',
     btn_theme_dark: 'Oscuro',
     btn_theme_light: 'Claro',
-    hero_eyebrow: 'Observación Terrestre NASA · Decisión Agronómica Guiada',
-    hero_title: 'Elegí la mejor rotación viendo exactamente qué cambia en tu suelo',
+    hero_eyebrow: 'Decisión Agronómica Guiada. Basado en datos NASA',
+    hero_title: 'Elige la mejor rotación viendo exactamente qué cambia en tu suelo',
     hero_sub: 'Un recorrido guiado en 4 pasos: delimitá tu lote con grilla NDVI real, elegí estado inicial y duración (1 a 6 años), diseñá tus estrategias con sus propias condiciones y obtené resultados explicados en cada dato.',
     hero_start_btn: 'Hacer un cálculo →',
     st_1: 'Lote y Mapa NDVI',
@@ -71,9 +86,9 @@ const I18N = {
     st_3: 'Línea de Tiempo',
     st_4: 'Resultados y Criterios',
     s1_kicker: 'Paso 1 de 4 · Delimitación Espacial, NDVI Interno y Estado de Partida',
-    s1_title: 'Marcá los puntos de tu lote para inspeccionar el NDVI por cuadro e iniciar el ciclo',
-    s1_intro: 'Hacé clic sobre la imagen satelital para marcar tu parcela (mínimo 3 puntos). Cada cuadro interno muestra su color y valor exacto de NDVI Sentinel-2 acorde al estado inicial del campo. Hacé clic en cualquier cuadro del mapa para ver su diagnóstico.',
-    s1_map_hint: 'Hacé clic en las esquinas del lote o tocá un cuadro interno de color para leer su NDVI exacto.',
+    s1_title: 'Marca los puntos de tu lote para inspeccionar el NDVI por cuadro e iniciar el ciclo',
+    s1_intro: 'Haz clic sobre la imagen satelital para marcar tu parcela (mínimo 3 puntos). Cada cuadro interno muestra su color y valor exacto de NDVI Sentinel-2 acorde al estado inicial del campo. Hacé clic en cualquier cuadro del mapa para ver su diagnóstico.',
+    s1_map_hint: 'Haz clic en las esquinas del lote o tocá un cuadro interno de color para leer su NDVI exacto.',
     btn_undo: '↩ Quitar último punto',
     btn_clear: 'Limpiar mapa',
     btn_preset: 'Cargar Guaminí (100.000 m²)',
@@ -108,12 +123,14 @@ const I18N = {
     card_smap_lbl: 'Humedad Radicular Inicial',
     card_smap_sub: 'Carga hídrica inicial del perfil en 0–100 cm.',
     card_magyp_lbl: 'Estabilidad Rindes 10 años',
-    card_magyp_sub: 'Sorgo: 5.400 kg/ha (CV 17%). Maíz: 6.900 kg/ha.',
+    card_magyp_sub: 'Sorgo: 5.400 kg/ha. Maíz: 6.900 kg/ha.',
     s2_form_title: 'Parámetros Base del Lote y Manejo del Agricultor',
-    s2_form_sub: 'Valores globales por defecto (cada estrategia puede heredarlos o definir los suyos abajo).',
+    s2_form_sub: 'Determinados en vivo por satélite según el polígono del Paso 1. Si contás con análisis INTA, laboratorio o medición propia, podés editarlos abajo.',
     badge_sat_mode: 'Modo Satélite (IC 90%)',
-    badge_field_mode: 'Calibrado con Dato de Campo ✓',
-    btn_reset_sat: 'Restaurar satélite',
+    badge_field_mode: 'Calibrado con Dato INTA / Propio ✓',
+    btn_edit_inta: 'Modificar con datos INTA / propios',
+    btn_edit_inta_active: 'Editando valores INTA / propios',
+    btn_reset_sat: 'Usar datos satelitales del Paso 1',
     inp_aw: 'Agua Disponible Perfil (mm/m)',
     hint_aw: 'Modifica: Capacidad del tanque hídrico y C2.',
     inp_moist: 'Humedad Inicial del Suelo (%)',
@@ -135,8 +152,8 @@ const I18N = {
     opt_mach_own: 'Equipo propio con rolo faca',
     hint_mach: 'Modifica: Viabilidad de pastura y sorgo (C8/C14).',
     sb_kicker: 'Constructor de Estrategias a Evaluar',
-    sb_title: 'Creá o editá cada estrategia con su secuencia y situación inicial antes de analizar',
-    sb_sub: 'Cada tarjeta representa una estrategia que se enviará al motor SAW-15 / TOPSIS-15. Podés modificar sus cultivos año a año (Invierno/Verano), cambiar su duración o darle condiciones iniciales propias (humedad, labranza, tosca, SOC).',
+    sb_title: 'Crea o edita cada estrategia con su secuencia y situación inicial antes de analizar',
+    sb_sub: 'Cada tarjeta representa una estrategia que se enviará al motor SAW-15 / TOPSIS-15. Puede modificar sus cultivos año a año (Invierno/Verano), cambiar su duración o darle condiciones iniciales propias (humedad, labranza, tosca, SOC).',
     sb_btn_restore: '↺ Restaurar Base',
     sb_btn_add: '+ Crear Nueva Estrategia',
     sb_tpl_lbl: 'Agregar plantilla rápida:',
@@ -148,7 +165,12 @@ const I18N = {
     btn_to_s3: 'Mandar todo a analizar y ver Simulación (Paso 3) →',
     s3_kicker: 'Paso 3 de 4 · Simulación Temporal Mes a Mes',
     s3_title: 'Línea de tiempo interactiva con estados intermedios y explicación al pie',
-    s3_intro: 'Inspeccioná cada estrategia analizada mes a mes. Hacé clic en cualquier mes o en el botón (?) de cualquier indicador para entender exactamente qué mide y cómo se calcula.',
+    s3_intro: 'Inspecciona cada estrategia analizada mes a mes. Haz clic en cualquier mes o en el botón (?) de cualquier indicador para entender exactamente qué mide y cómo se calcula.',
+    s3_chart_guide_title: '📊 Cómo leer este gráfico y qué significan sus tendencias',
+    s3_btn_chart_tour: 'Mini-tutorial de los gráficos',
+    s3_btn_toggle_guide: 'Ocultar guía',
+    s3_btn_show_guide: 'Mostrar guía de gráficos',
+    s3_chart_axes_hint: 'El Eje Izquierdo mide Agua Útil (mm), Vigor NDVI (×100) y Nitrógeno (kg/ha). El Eje Derecho mide el Carbono Acumulado en tu lote (t C). Hacé clic en cualquier punto de las curvas para inspeccionar ese mes.',
     chk_compare_e0: 'Comparar agua útil vs. Testigo Base',
     btn_prev_m: '◀ Mes anterior',
     btn_play_m: '▶ Recorrer ciclo automáticamente',
@@ -158,14 +180,14 @@ const I18N = {
     leg_cov: 'Cobertura viva',
     leg_stub: 'Rastrojo',
     leg_bare: 'Suelo desnudo',
-    fn_kicker: 'Detalle del Mes Seleccionado · Explicación al Pie',
+    fn_kicker: 'Detalle del Mes Seleccionado',
     btn_fn_eq: '? · ƒx Fórmulas del mes',
     btn_back_s2: '← Volver al Paso 2 (Editar Estrategias)',
     btn_to_s4: 'Seguir a Gráficos y Conclusiones (Paso 4) →',
     s4_kicker: 'Paso 4 de 4 · Resultados Auditados, Escenarios y Popups Explicativos',
     s4_title: 'Gráficos comparativos, prueba de estrés climático y explicación de cada resultado',
-    s4_intro: 'Evaluá el ranking final SAW-15, SAW-8 y TOPSIS-15. Hacé clic en cualquier criterio o puntaje de la tabla para abrir un popup explicando qué significa en palabras simples, su ecuación exacta y cómo mejorar ese puntaje.',
-    scen_prompt: 'Probar escenario climático o económico especial:',
+    s4_intro: 'Evaluá el ranking final SAW-15, SAW-8 y TOPSIS-15. Haz clic en cualquier criterio o puntaje de la tabla para abrir un popup con detalles tecnicos del indicador, su ecuación exacta y cómo mejorar ese puntaje.',
+    scen_prompt: 'Probar escenario climático o económico particular:',
     sc_normal: 'Clima Normal (Base)',
     sc_nina: 'Sequía La Niña (-30% lluvia · +2°C)',
     sc_nino: 'Evento El Niño (+30% lluvia)',
@@ -179,29 +201,37 @@ const I18N = {
     sl_wecon: 'Prioridad Caja',
     sl_wecon_h: 'Modifica pesos: C8, C14, C15.',
     conc_kicker: 'Síntesis Agronómica Auditada',
-    btn_explain_res: '¿Cómo leer estos resultados?',
+    btn_explain_res: 'Criterios de lectura del diagnóstico',
     conc_title: 'Conclusiones y recomendación para tu parcela',
     chart_rank_title: 'Gráfico Comparativo: Puntaje Ponderado (SAW-15) vs. No Compensatorio (TOPSIS-15)',
     btn_audit_mcda: '? · ƒx Auditar fórmulas SAW, TOPSIS y Monte Carlo',
-    tbl_click_hint: '💡 Tip interactivo: Hacé clic en cualquier criterio (C1–C15), puntaje de la tabla o fila final (SAW-8 / SAW-15 / TOPSIS) para abrir su explicación detallada.',
+    tbl_click_hint: 'Tip interactivo: Haz clic en cualquier criterio (C1–C15), puntaje de la tabla o fila final (SAW-8 / SAW-15 / TOPSIS) para abrir su explicación detallada.',
     btn_all_crit: '📘 Ver los 15 criterios juntos',
     cat_title: 'Parámetros Fisiológicos de las Especies Evaluadas',
     btn_back_s3: '← Volver al Paso 3 (Línea de Tiempo)',
     btn_restart: '↻ Iniciar nuevo cálculo',
     ft_desc: 'Herramienta abierta de apoyo a la decisión agronómica bajo cambio climático (Apache 2.0). Desafío NASA Space Apps 2026. Toda decisión de manejo debe validarse con un ingeniero agrónomo matriculado.',
     ft_apis: 'APIs Integradas',
-    ft_arch: 'Arquitectura MVC v4.0',
-    mod_badge: 'Explicación y Auditoría Matemática · Caja Blanca',
+    ft_api_1: 'NASA POWER API (Clima + GWETROOT)',
+    ft_api_2: 'ISRIC SoilGrids v2.0 (5 Profundidades · IC 90%)',
+    ft_api_3: 'Planetary Computer Sentinel-2 L2A (10 m) & Open-Meteo',
+    ft_api_4: 'Georef AR + OSM Nominatim · INTA · MAGyP',
+    ft_arch: 'Arquitectura MVC v5.0',
+    ft_arch_1: 'Backend: Node.js + Express + EJS',
+    ft_arch_2: 'Física: Penman-Monteith FAO-56 + FAO-33',
+    ft_arch_3: 'Geodesia: Leaflet.js + Turf.js + Chart.js',
+    ft_arch_4: 'Motor: SAW-15 · TOPSIS-15 · Extremos POWER',
+    mod_badge: 'Fundamento Técnico y Fórmulas',
     btn_close: 'Cerrar ✕',
     btn_cancel: 'Cancelar',
     se_badge: 'Configurador de Estrategia Agronómica',
     se_title_new: 'Crear Nueva Estrategia de Rotación',
     se_title_edit: 'Editar Estrategia y Condiciones Iniciales',
-    se_lbl_short: 'Código corto (ej. E6)',
+    se_lbl_short: 'Código corto',
     se_lbl_name: 'Nombre descriptivo',
     se_lbl_years: 'Duración de esta estrategia',
     se_seq_title: '1. Secuencia de Cultivos Año por Año (Otoño-Invierno y Primavera-Verano)',
-    se_seq_sub: 'Elegí qué cubre el lote en invierno y qué cultivo comercial sembrás en verano.',
+    se_seq_sub: 'Elige qué cubre el lote en invierno y qué cultivo comercial sembrarías en verano.',
     se_init_title: '2. Datos y Situación Inicial Propia de esta Estrategia',
     se_chk_global: 'Heredar parámetros base del lote (Paso 1 y 2)',
     se_inp_prev: 'Estado / Cultivo Inicial',
@@ -216,27 +246,31 @@ const I18N = {
     se_btn_save: 'Guardar Estrategia en Comparativa ✓',
     dir_badge: 'Glosario Científico-Agronómico Completo',
     dir_title: '¿Qué significa cada dato, criterio (C1–C15) y método matemático?',
-    dir_sub: 'Explorá cada criterio y concepto en lenguaje simple con su ecuación exacta y fuente oficial NASA/INTA.'
+    dir_sub: 'Explora cada criterio y conceptos con su ecuación exacta y fuente oficial NASA/INTA.'
   },
   en: {
-    mq_1: '✓ NASA Space Apps 2026 — Field Shift v4.0 (FAO-56 · FAO-33 · MCDA)',
-    mq_2: '✓ NASA POWER Daily Series + SoilGrids Q0.05–Q0.95 + INTA SIGA + Sentinel-2',
+    mq_1: '✓ NASA Space Apps 2026 — Field Shift v5.0 (FAO-56 · FAO-33 · MCDA)',
+    mq_2: '✓ Planetary Computer Sentinel-2 L2A + NASA POWER + 5-Depth SoilGrids',
     mq_3: '✓ Aptitude Filter · Audited SAW-15 · TOPSIS-15 · Monte Carlo (N=10,000)',
     mq_4: '✓ Open Source Apache 2.0 — 1–6 Yr Cycles & Interactive Pointer Tour',
-    hdr_ready: 'Ready to start calculation',
+    hdr_ready: 'Version 5.0 · 2026',
     hdr_step_prefix: 'Step',
     hdr_of: 'of 4',
     btn_tour_hdr: 'Tour',
-    btn_mini_tut: 'Step mini-tutorial',
+    btn_mini_tut: 'mini-tutorial',
     pt_skip: 'Skip tutorial ✕',
+    pt_pause: 'Pause',
+    pt_resume: 'Resume',
+    pt_paused_badge: '⏸ Paused',
     pt_next: 'Next ▶',
     pt_finish: 'Got it ✓',
+    btn_sat_detect: 'Detect satellite on plot',
     btn_guide_hdr: '📘 Guide',
     btn_theme_dark: 'Dark',
     btn_theme_light: 'Light',
     hero_eyebrow: 'NASA Earth Observation · Guided Agronomic Decision Support',
     hero_title: 'Choose the best crop rotation by seeing exactly what changes in your soil',
-    hero_sub: 'A 4-step workflow: delineate your plot with real cell-level NDVI colors, choose initial field state & duration (1–6 years), build candidate strategies with custom initial conditions, and inspect white-box explanations on every metric.',
+    hero_sub: 'A 4-step workflow: delineate your plot with real cell-level NDVI colors, choose initial field state & duration (1–6 years), build candidate strategies with custom initial conditions, and inspect formula explanations on every metric.',
     hero_start_btn: 'Make a calculation →',
     st_1: 'Plot & NDVI Map',
     st_2: 'Soil & Strategies',
@@ -282,10 +316,12 @@ const I18N = {
     card_magyp_lbl: '10-Year Yield Stability',
     card_magyp_sub: 'Sorghum: 5,400 kg/ha (CV 17%). Maize: 6,900 kg/ha.',
     s2_form_title: 'Base Plot Parameters & Farmer Management',
-    s2_form_sub: 'Default global parameters (each strategy below can inherit or override them).',
+    s2_form_sub: 'Determined live by satellite for your Step 1 plot. If you have INTA, lab, or farm-level measurements, you can edit them below.',
     badge_sat_mode: 'Satellite Mode (90% CI)',
-    badge_field_mode: 'Calibrated with Field Data ✓',
-    btn_reset_sat: 'Restore satellite',
+    badge_field_mode: 'Calibrated with INTA / Farm Data ✓',
+    btn_edit_inta: 'Modify with INTA / farm data',
+    btn_edit_inta_active: 'Editing INTA / farm data',
+    btn_reset_sat: 'Use Step 1 satellite data',
     inp_aw: 'Profile Available Water (mm/m)',
     hint_aw: 'Modifies: Water tank capacity and C2.',
     inp_moist: 'Initial Soil Moisture (%)',
@@ -321,6 +357,11 @@ const I18N = {
     s3_kicker: 'Step 3 of 4 · Month-by-Month Temporal Simulation',
     s3_title: 'Interactive timeline with intermediate states & explanatory footnote',
     s3_intro: 'Inspect each analyzed strategy month by month. Click any month tile or the (?) button on any metric to read what it means and how it is calculated.',
+    s3_chart_guide_title: '📊 How to read this chart & what the trends mean',
+    s3_btn_chart_tour: 'Charts mini-tutorial',
+    s3_btn_toggle_guide: 'Hide guide',
+    s3_btn_show_guide: 'Show charts guide',
+    s3_chart_axes_hint: 'Left Axis shows Available Water (mm), Cover NDVI (×100), and Nitrogen (kg/ha). Right Axis shows Accumulated Plot Carbon (t C). Click any point on the curves to inspect that month.',
     chk_compare_e0: 'Compare available water vs. Baseline Strategy',
     btn_prev_m: '◀ Previous month',
     btn_play_m: '▶ Auto-play cycle',
@@ -355,21 +396,29 @@ const I18N = {
     conc_title: 'Conclusions and recommendation for your plot',
     chart_rank_title: 'Comparative Chart: Weighted Score (SAW-15) vs. Non-Compensatory (TOPSIS-15)',
     btn_audit_mcda: '? · ƒx Audit SAW, TOPSIS & Monte Carlo formulas',
-    tbl_click_hint: '💡 Interactive tip: Click any criterion (C1–C15), score chip, or summary row (SAW-8 / SAW-15 / TOPSIS) to open a detailed explanation popup.',
+    tbl_click_hint: 'Interactive tip: Click any criterion (C1–C15), score chip, or summary row (SAW-8 / SAW-15 / TOPSIS) to open a detailed explanation popup.',
     btn_all_crit: '📘 Browse all 15 criteria',
     cat_title: 'Physiological Parameters of Evaluated Species',
     btn_back_s3: '← Back to Step 3 (Timeline)',
     btn_restart: '↻ Start new calculation',
     ft_desc: 'Open-source agronomic decision support tool under climate change (Apache 2.0). NASA Space Apps 2026 Challenge. Validate all field decisions with a licensed agronomist.',
     ft_apis: 'Integrated APIs',
-    ft_arch: 'MVC Architecture v4.0',
-    mod_badge: 'Explanation & Mathematical Audit · White Box',
+    ft_api_1: 'NASA POWER API (Climatology + GWETROOT)',
+    ft_api_2: 'ISRIC SoilGrids v2.0 (5 Depths · 90% CI)',
+    ft_api_3: 'Planetary Computer Sentinel-2 L2A (10 m) & Open-Meteo',
+    ft_api_4: 'Georef AR + OSM Nominatim · INTA · MAGyP',
+    ft_arch: 'MVC Architecture v5.0',
+    ft_arch_1: 'Backend: Node.js + Express + EJS',
+    ft_arch_2: 'Physics: Penman-Monteith FAO-56 + FAO-33',
+    ft_arch_3: 'Geodesy: Leaflet.js + Turf.js + Chart.js',
+    ft_arch_4: 'Engine: SAW-15 · TOPSIS-15 · POWER Extremes',
+    mod_badge: 'Technical Basis & Evaluation Formulas',
     btn_close: 'Close ✕',
     btn_cancel: 'Cancel',
     se_badge: 'Agronomic Strategy Configurator',
     se_title_new: 'Create New Rotation Strategy',
     se_title_edit: 'Edit Strategy Sequence & Initial Conditions',
-    se_lbl_short: 'Short code (e.g., E6)',
+    se_lbl_short: 'Short code',
     se_lbl_name: 'Descriptive name',
     se_lbl_years: 'Strategy cycle duration',
     se_seq_title: '1. Year-by-Year Crop Sequence (Fall-Winter & Spring-Summer)',
@@ -387,8 +436,8 @@ const I18N = {
     se_inp_tosca: 'Effective Depth / Hardpan (cm)',
     se_btn_save: 'Save Strategy to Comparison ✓',
     dir_badge: 'Full Scientific-Agronomic Glossary',
-    dir_title: 'What does every metric, criterion (C1–C15), and formula mean?',
-    dir_sub: 'Explore every indicator in plain language alongside its exact equation and NASA/INTA source.'
+    dir_title: 'What does every metric, criterion (C1–C15) and formula mean?',
+    dir_sub: 'Explore every indicator and agronomic method alongside its exact equation and NASA/INTA source.'
   }
 };
 
@@ -456,19 +505,26 @@ function toggleLanguage() {
   const prevVal = document.getElementById('prevCropInput').value;
   applyStaticTranslations();
   document.getElementById('prevCropInput').value = prevVal;
+  renderSatObservationBanner();
   renderInitialStateSummaryCard();
 
+  const scenEl = document.getElementById('scenarioActiveLabel');
+  if (scenEl) scenEl.textContent = t(`sc_${CLIENT_STATE.scenarioMode || 'normal'}`);
+
   if (currentLatLngs.length >= 3) {
-    renderPolygonOnMap();
+    renderPolygonOnMap(true);
   }
+  applyZoneSatelliteParamsToInputs(CLIENT_STATE.envContext);
   updateEnvCards(CLIENT_STATE.envContext);
   renderStep2Strategies();
+  updateChartGuideToggleButton();
   if (CLIENT_STATE.currentStep === 3) renderTimelineSection();
   if (CLIENT_STATE.currentStep === 4) {
     renderRankingSection();
     renderCropCatalog();
   }
   if (CLIENT_STATE.tutorialState.active) {
+    updatePointerTutorialPauseUi();
     renderPointerTutorialSlide(false);
   }
 }
@@ -497,10 +553,11 @@ function getSelectedInitialFieldState(stateId) {
 function populateInitialStatesSelect(selectId) {
   const sel = document.getElementById(selectId);
   if (!sel) return;
-  const currentVal = sel.value || 'soja_1ra';
+  const currentVal = sel.value || APP_DATA.params?.prevCrop || 'satelite_actual';
   const isEs = CLIENT_STATE.lang === 'es';
 
   const groups = {
+    satelite: { label: isEs ? '🛰️ Observación Satelital Real (Sin cultivo predefinido)' : '🛰️ Live Satellite Field Observation (Auto-detected)', items: [] },
     estival: { label: isEs ? '🌾 Cultivos Estivales en Curso / Rastrojos de Cosecha' : '🌾 Standing Summer Crops & Harvest Residues', items: [] },
     invernal_perenne: { label: isEs ? '🌱 Coberturas, Pasturas y Rastrojos Invernales' : '🌱 Winter Stubble, Cover Crops & Pastures', items: [] },
     barbecho_critico: { label: isEs ? '⚠️ Barbechos y Estados Críticos de Suelo' : '⚠️ Fallows & Critical Soil Conditions', items: [] }
@@ -511,15 +568,197 @@ function populateInitialStatesSelect(selectId) {
     g.items.push(st);
   });
 
-  sel.innerHTML = Object.values(groups).map((g) => `
-    <optgroup label="${g.label}">
-      ${g.items.map((st) => `<option value="${st.id}">${isEs ? st.name_es : st.name_en}</option>`).join('')}
-    </optgroup>
-  `).join('');
+  sel.innerHTML = Object.values(groups)
+    .filter((g) => g.items.length > 0)
+    .map((g) => `
+      <optgroup label="${g.label}">
+        ${g.items.map((st) => `<option value="${st.id}">${isEs ? st.name_es : st.name_en}</option>`).join('')}
+      </optgroup>
+    `).join('');
 
   if ([...sel.options].some((o) => o.value === currentVal)) {
     sel.value = currentVal;
+  } else {
+    sel.value = 'satelite_actual';
   }
+}
+
+function getEffectiveSatelliteSummary() {
+  const sat = CLIENT_STATE.satelliteData;
+  const ctxSoil = CLIENT_STATE.envContext?.suelo || {};
+  const liveMoist = Number.isFinite(Number(ctxSoil.humedad_smap_inicial_pct))
+    ? Number(ctxSoil.humedad_smap_inicial_pct)
+    : 62;
+  if (sat && sat.modo === 'live_sentinel2' && sat.summary) {
+    return {
+      isLive: true,
+      ndvi: Number(sat.meanNdvi),
+      ndmi: Number(sat.meanNdmi),
+      date: sat.date,
+      cloudPct: sat.cloudPct,
+      vegSharePct: sat.vegSharePct,
+      bareSharePct: sat.bareSharePct,
+      moisturePct: liveMoist,
+      residueCoverPct: sat.summary.residueCoverPct,
+      initN_kgHa: sat.summary.initN_kgHa,
+      title_es: sat.summary.title_es,
+      title_en: sat.summary.title_en,
+      desc_es: sat.summary.desc_es,
+      desc_en: sat.summary.desc_en
+    };
+  }
+  return {
+    isLive: false,
+    ndvi: 0.25,
+    ndmi: null,
+    date: null,
+    cloudPct: null,
+    moisturePct: liveMoist,
+    residueCoverPct: 50,
+    initN_kgHa: 36
+  };
+}
+
+function renderSatObservationBanner() {
+  const box = document.getElementById('satObservationBanner');
+  if (!box) return;
+  const isEs = CLIENT_STATE.lang === 'es';
+  const sat = CLIENT_STATE.satelliteData;
+  const soil = CLIENT_STATE.envContext?.suelo || {};
+  const selectedId = document.getElementById('prevCropInput')?.value || 'satelite_actual';
+  const isSatMode = selectedId === 'satelite_actual';
+
+  if (CLIENT_STATE.satFetching) {
+    box.innerHTML = `
+      <div class="sat-obs-head">
+        <span class="trust-badge trust-yellow"><span class="trust-dot"></span> ${isEs ? 'Consultando Sentinel-2 L2A + NASA humedad para tu polígono...' : 'Querying Sentinel-2 L2A + NASA moisture for your plot...'}</span>
+      </div>
+    `;
+    return;
+  }
+
+  if (sat && sat.modo === 'live_sentinel2') {
+    const sSum = sat.summary || {};
+    const title = isEs ? (sSum.title_es || 'Observación Sentinel-2 L2A') : (sSum.title_en || 'Sentinel-2 L2A Observation');
+    const histHtml = Array.isArray(sat.history) && sat.history.length > 0
+      ? `<div class="sat-history-strip">
+           <span>${isEs ? 'Últimas pasadas sin nubes (centroide):' : 'Recent cloud-free passes (centroid):'}</span>
+           ${sat.history.map((h) => `<span class="sat-history-chip">${h.date}: NDVI ${isEs ? Number(h.ndvi).toFixed(2).replace('.', ',') : Number(h.ndvi).toFixed(2)}</span>`).join('')}
+         </div>`
+      : '';
+
+    const manualNote = !isSatMode
+      ? `<div style="margin-top:6px; font-size:11.5px; color:var(--alert-terracotta); font-weight:600;">
+           ${isEs ? 'Nota: Elegiste un estado manual; el mapa muestra tu patrón paramétrico en vez de los píxeles Sentinel-2 reales.' : 'Note: Manual state selected; map displays your chosen parametric pattern instead of raw Sentinel-2 pixels.'}
+         </div>`
+      : '';
+
+    box.innerHTML = `
+      <div class="sat-obs-head">
+        <span class="trust-badge ${isSatMode ? 'trust-green' : 'trust-yellow'}">
+          <span class="trust-dot"></span>
+          ${isEs ? `🛰️ Sentinel-2 L2A en vivo · Escena ${sat.date}` : `🛰️ Live Sentinel-2 L2A · Scene ${sat.date}`}
+        </span>
+        <span style="font-size:11.5px; color:var(--graphite);">${title}</span>
+      </div>
+      <div class="sat-obs-metrics">
+        <span class="sat-metric-chip">NDVI: <strong>${isEs ? Number(sat.meanNdvi).toFixed(2).replace('.', ',') : Number(sat.meanNdvi).toFixed(2)}</strong></span>
+        <span class="sat-metric-chip">NDMI (${isEs ? 'agua foliar' : 'moisture'}): <strong>${sat.meanNdmi !== null && sat.meanNdmi !== undefined ? (isEs ? Number(sat.meanNdmi).toFixed(2).replace('.', ',') : Number(sat.meanNdmi).toFixed(2)) : '—'}</strong></span>
+        <span class="sat-metric-chip">${isEs ? 'Nubes escena' : 'Scene cloud'}: <strong>${sat.cloudPct ?? '—'}%</strong></span>
+        <span class="sat-metric-chip">${isEs ? 'Humedad perfil' : 'Root moisture'}: <strong>${soil.humedad_smap_inicial_pct ?? 62}%</strong></span>
+      </div>
+      ${histHtml}
+      ${manualNote}
+    `;
+  } else {
+    box.innerHTML = `
+      <div class="sat-obs-head">
+        <span class="trust-badge trust-yellow">
+          <span class="trust-dot"></span>
+          ${isEs ? '📐 Estimación paramétrica (sin escena Sentinel-2 en vivo)' : '📐 Parametric estimation (no live Sentinel-2 scene)'}
+        </span>
+        <span style="font-size:11.5px; color:var(--graphite);">${sat?.error ? (isEs ? 'Escena reciente cubierta o timeout' : 'Recent imagery cloudy or timed out') : ''}</span>
+      </div>
+      <div class="sat-obs-metrics">
+        <span class="sat-metric-chip">${isEs ? 'Humedad perfil' : 'Root moisture'}: <strong>${soil.humedad_smap_inicial_pct ?? 62}%</strong> (${soil.humedad_fuente || 'NASA/Open-Meteo'})</span>
+      </div>
+    `;
+  }
+}
+
+function getBboxArrayFromLatLngs(latLngs) {
+  if (!Array.isArray(latLngs) || latLngs.length < 3) return null;
+  const lats = latLngs.map((p) => p[0]);
+  const lons = latLngs.map((p) => p[1]);
+  return [
+    Number(Math.min(...lons).toFixed(6)),
+    Number(Math.min(...lats).toFixed(6)),
+    Number(Math.max(...lons).toFixed(6)),
+    Number(Math.max(...lats).toFixed(6))
+  ];
+}
+
+async function fetchStep1SatelliteData(force = false) {
+  if (currentLatLngs.length < 3) return;
+  const bbox = getBboxArrayFromLatLngs(currentLatLngs);
+  if (!bbox) return;
+  const bboxKey = bbox.join(',');
+  if (!force && bboxKey === CLIENT_STATE.satLastBboxKey && CLIENT_STATE.satelliteData?.modo === 'live_sentinel2') {
+    return;
+  }
+
+  CLIENT_STATE.satFetching = true;
+  renderSatObservationBanner();
+
+  try {
+    const res = await fetch('/api/satellite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lat: CLIENT_STATE.lat,
+        lon: CLIENT_STATE.lon,
+        bbox,
+        polygon: currentLatLngs,
+        rows: 6,
+        cols: 7,
+        force
+      })
+    });
+    const data = await res.json();
+    if (data && data.ok) {
+      CLIENT_STATE.satLastBboxKey = bboxKey;
+      CLIENT_STATE.satelliteData = data.satellite || null;
+      if (!CLIENT_STATE.envContext) CLIENT_STATE.envContext = {};
+      if (data.georef) CLIENT_STATE.envContext.georef = data.georef;
+      if (data.suelo) CLIENT_STATE.envContext.suelo = data.suelo;
+      if (data.clima) CLIENT_STATE.envContext.clima = data.clima;
+      if (data.estadisticas_magyp) CLIENT_STATE.envContext.estadisticas_magyp = data.estadisticas_magyp;
+
+      if (data.georef?.etiqueta) {
+        const jd = document.getElementById('jurisdictionDisplay');
+        if (jd) jd.textContent = data.georef.etiqueta;
+      }
+
+      applyZoneSatelliteParamsToInputs(CLIENT_STATE.envContext);
+      updateEnvCards(CLIENT_STATE.envContext);
+      if (CLIENT_STATE.currentStep === 2) {
+        renderStep2Strategies();
+      }
+    }
+  } catch (err) {
+    console.warn('Error consultando /api/satellite:', err);
+  } finally {
+    CLIENT_STATE.satFetching = false;
+    renderSatObservationBanner();
+    renderInitialStateSummaryCard();
+    if (currentLatLngs.length >= 3) {
+      renderPolygonOnMap(true);
+    }
+  }
+}
+
+function refreshStep1Satellite(force = true) {
+  fetchStep1SatelliteData(force);
 }
 
 function renderInitialStateSummaryCard() {
@@ -527,6 +766,33 @@ function renderInitialStateSummaryCard() {
   const isEs = CLIENT_STATE.lang === 'es';
   const box = document.getElementById('initialStateSummaryCard');
   if (!box || !st) return;
+
+  if (st.id === 'satelite_actual') {
+    const live = getEffectiveSatelliteSummary();
+    const desc = live.isLive
+      ? (isEs ? live.desc_es : live.desc_en)
+      : (isEs ? st.desc_es : st.desc_en);
+    const ndviTxt = live.ndvi.toFixed(2);
+    const ndmiBadge = live.ndmi !== null && live.ndmi !== undefined
+      ? `<div class="init-mini-badge"><span>NDMI</span><strong>${live.ndmi.toFixed(2)}</strong></div>`
+      : '';
+    box.innerHTML = `
+      <div style="font-size:12px; line-height:1.45;">
+        <strong>${live.isLive
+          ? (isEs ? `Observación real Sentinel-2 (${live.date}):` : `Live Sentinel-2 observation (${live.date}):`)
+          : (isEs ? 'Diagnóstico inicial del lote:' : 'Initial field impact:')}</strong>
+        ${desc}
+      </div>
+      <div class="init-state-metrics-row">
+        <div class="init-mini-badge"><span>${live.isLive ? 'NDVI Real' : 'NDVI Ini'}</span><strong>${ndviTxt}</strong></div>
+        ${ndmiBadge}
+        <div class="init-mini-badge"><span>${isEs ? 'Humedad' : 'Moisture'}</span><strong>${live.moisturePct}%</strong></div>
+        <div class="init-mini-badge"><span>${isEs ? 'Cobertura est.' : 'Est. Cover'}</span><strong>${live.residueCoverPct}%</strong></div>
+        <div class="init-mini-badge"><span>${isEs ? 'N disp.' : 'Avail. N'}</span><strong>${live.initN_kgHa} kg</strong></div>
+      </div>
+    `;
+    return;
+  }
 
   box.innerHTML = `
     <div style="font-size:12px; line-height:1.45;">
@@ -544,10 +810,11 @@ function renderInitialStateSummaryCard() {
 
 function onPrevCropChange() {
   const st = getSelectedInitialFieldState();
+  renderSatObservationBanner();
   renderInitialStateSummaryCard();
 
-  if (!CLIENT_STATE.isLocalOverride && st) {
-    document.getElementById('inputInitMoisture').value = st.initMoisturePct;
+  if (!CLIENT_STATE.isLocalOverride) {
+    applyZoneSatelliteParamsToInputs(CLIENT_STATE.envContext);
   }
 
   // Sincronizar las estrategias base que heredan parámetros globales
@@ -558,7 +825,7 @@ function onPrevCropChange() {
   });
 
   if (currentLatLngs.length >= 3) {
-    renderPolygonOnMap();
+    renderPolygonOnMap(true);
   }
 }
 
@@ -663,8 +930,14 @@ async function goToStep(stepNum) {
       maybeAutoStartStepTutorial(1);
     }, 180);
   } else if (stepNum === 2) {
+    if (currentLatLngs.length >= 3) {
+      clearTimeout(CLIENT_STATE.satDebounceTimer);
+      await fetchStep1SatelliteData(false);
+    }
+    applyZoneSatelliteParamsToInputs(CLIENT_STATE.envContext);
     renderStep2Strategies();
     await syncWithBackend();
+    applyZoneSatelliteParamsToInputs(CLIENT_STATE.envContext);
     renderStep2Strategies();
     maybeAutoStartStepTutorial(2);
   } else if (stepNum === 3) {
@@ -685,23 +958,46 @@ async function goToStep(stepNum) {
 function initMap() {
   map = L.map('map', { scrollWheelZoom: false }).setView([CLIENT_STATE.lat, CLIENT_STATE.lon], 15);
 
-  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    attribution: 'Tiles &copy; Esri &mdash; Sentinel-2 / NASA Earthdata'
+  const esriLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: 'Tiles &copy; Esri &mdash; Sentinel-2 / NASA Earthdata',
+    updateWhenIdle: true,
+    keepBuffer: 2
   }).addTo(map);
+
+  let tileErrors = 0;
+  let osmAdded = false;
+  esriLayer.on('tileerror', () => {
+    tileErrors += 1;
+    if (tileErrors >= 3 && !osmAdded) {
+      osmAdded = true;
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors',
+        updateWhenIdle: true
+      }).addTo(map);
+    }
+  });
 
   ndviLayerGroup = L.layerGroup().addTo(map);
   ndviLabelsGroup = L.layerGroup().addTo(map);
 
   map.on('click', (e) => {
     currentLatLngs.push([e.latlng.lat, e.latlng.lng]);
+    CLIENT_STATE.isLocalOverride = false;
     renderPolygonOnMap();
   });
+
+  // Marcar bbox inicial de SSR para evitar doble consulta al arrancar cuando ya llegó Sentinel-2 en vivo
+  const initBbox = getBboxArrayFromLatLngs(APP_DATA.meta.poligono_default);
+  if (initBbox && CLIENT_STATE.satelliteData?.modo === 'live_sentinel2') {
+    CLIENT_STATE.satLastBboxKey = initBbox.join(',');
+  }
 
   loadGuaminiPreset(false);
 }
 
 function loadGuaminiPreset(recenter = true) {
   currentLatLngs = APP_DATA.meta.poligono_default.map((pt) => [...pt]);
+  if (recenter) CLIENT_STATE.isLocalOverride = false;
   renderPolygonOnMap();
   if (recenter && polygonLayer) {
     map.fitBounds(polygonLayer.getBounds(), { padding: [40, 40] });
@@ -711,12 +1007,14 @@ function loadGuaminiPreset(recenter = true) {
 function undoLastPoint() {
   if (currentLatLngs.length > 0) {
     currentLatLngs.pop();
+    CLIENT_STATE.isLocalOverride = false;
     renderPolygonOnMap();
   }
 }
 
 function clearPolygon() {
   currentLatLngs = [];
+  CLIENT_STATE.isLocalOverride = false;
   renderPolygonOnMap();
 }
 
@@ -780,7 +1078,7 @@ function updateAreaDisplay(bandCounts = { bare: 0, low: 0, mod: 0, high: 0, tota
   document.getElementById('areaHaDisplay').textContent = isEs
     ? `${CLIENT_STATE.areaHa.toFixed(2).replace('.', ',')} hectáreas · ${currentLatLngs.length} vértices`
     : `${CLIENT_STATE.areaHa.toFixed(2)} hectares · ${currentLatLngs.length} vertices`;
-  document.getElementById('centroidDisplay').textContent = `${CLIENT_STATE.lat.toFixed(6)}° S, ${CLIENT_STATE.lon.toFixed(6)}° O`;
+  document.getElementById('centroidDisplay').textContent = formatCoords(CLIENT_STATE.lat, CLIENT_STATE.lon, isEs);
   document.getElementById('meanNdviBadge').textContent = isEs
     ? `NDVI medio lote: ${CLIENT_STATE.meanNdvi.toFixed(2).replace('.', ',')}`
     : `Plot mean NDVI: ${CLIENT_STATE.meanNdvi.toFixed(2)}`;
@@ -799,7 +1097,7 @@ function updateAreaDisplay(bandCounts = { bare: 0, low: 0, mod: 0, high: 0, tota
   }
 }
 
-function renderPolygonOnMap() {
+function renderPolygonOnMap(skipAutoFetch = false) {
   if (polygonLayer) map.removeLayer(polygonLayer);
   if (ndviLayerGroup) ndviLayerGroup.clearLayers();
   if (ndviLabelsGroup) ndviLabelsGroup.clearLayers();
@@ -851,6 +1149,16 @@ function renderPolygonOnMap() {
     const dx = (bbox[2] - bbox[0]) / cols;
     const dy = (bbox[3] - bbox[1]) / rows;
 
+    const sat = CLIENT_STATE.satelliteData;
+    const useLiveSat = initState.id === 'satelite_actual' && sat && sat.modo === 'live_sentinel2' && Array.isArray(sat.cells);
+
+    const gridTitleEl = document.getElementById('ndviGridTitle');
+    if (gridTitleEl) {
+      gridTitleEl.textContent = useLiveSat
+        ? (isEs ? `Grilla NDVI Real Sentinel-2 L2A (${sat.date})` : `Live Sentinel-2 L2A NDVI Grid (${sat.date})`)
+        : (isEs ? `Grilla Paramétrica (${initState.name_es.split('(')[0].trim()})` : `Parametric Pattern (${initState.name_en.split('(')[0].trim()})`);
+    }
+
     let ndviSum = 0;
     const bandCounts = { bare: 0, low: 0, mod: 0, high: 0, total: 0 };
 
@@ -864,7 +1172,8 @@ function renderPolygonOnMap() {
         const clipped = turf.intersect(cellPoly, polyGeoJson);
 
         if (clipped) {
-          const ndviVal = computeCellNdvi(r, c, rows, cols, initState);
+          const satCell = useLiveSat ? (sat.cells[r]?.[c] || null) : null;
+          const ndviVal = satCell ? Number(satCell.ndvi) : computeCellNdvi(r, c, rows, cols, initState);
           const cellColor = getNdviColor(ndviVal);
           const cellM2 = Math.round(turf.area(clipped));
           const cellCenter = turf.centroid(clipped).geometry.coordinates;
@@ -886,32 +1195,37 @@ function renderPolygonOnMap() {
               }
             }).addTo(ndviLayerGroup);
 
-            const statusTxt = ndviVal < 0.20
-              ? (isEs ? 'Suelo desnudo / riesgo crítico' : 'Bare soil / critical exposure')
-              : (ndviVal < 0.45 ? (isEs ? 'Rastrojo o cobertura baja' : 'Stubble / low cover')
-                : (ndviVal < 0.70 ? (isEs ? 'Cultivo o cobertura activa' : 'Active growing canopy') : (isEs ? 'Vigor fotosintético pleno' : 'Peak canopy vigor')));
+            const statusTxt = satCell
+              ? `${isEs ? satCell.sclLabel_es : satCell.sclLabel_en} · ${ndviVal < 0.20 ? (isEs ? 'sin cobertura verde' : 'bare / stubble') : (ndviVal < 0.45 ? (isEs ? 'vigor bajo / rastrojo mixto' : 'low greenness / mixed stubble') : (isEs ? 'vegetación verde activa' : 'active green canopy'))}`
+              : (ndviVal < 0.20
+                ? (isEs ? 'Suelo desnudo / riesgo crítico' : 'Bare soil / critical exposure')
+                : (ndviVal < 0.45 ? (isEs ? 'Rastrojo o cobertura baja' : 'Stubble / low cover')
+                  : (ndviVal < 0.70 ? (isEs ? 'Cultivo o cobertura activa' : 'Active growing canopy') : (isEs ? 'Vigor fotosintético pleno' : 'Peak canopy vigor'))));
 
-            // Simular bandas espectrales coherentes con NDVI = (NIR - RED) / (NIR + RED)
-            const redRefl = Number((0.18 - ndviVal * 0.12).toFixed(3));
-            const nirRefl = Number((redRefl * (1 + ndviVal) / (1 - ndviVal)).toFixed(3));
+            const redRefl = satCell ? satCell.red : Number((0.18 - ndviVal * 0.12).toFixed(3));
+            const nirRefl = satCell ? satCell.nir : Number((redRefl * (1 + ndviVal) / (1 - ndviVal)).toFixed(3));
+            const swirInfo = satCell ? ` · SWIR1=${satCell.swir1} · NDMI=${satCell.ndmi}` : '';
+            const sourceHeader = satCell
+              ? `Sentinel-2 L2A (${sat.date}) · ${isEs ? 'Cuadro' : 'Cell'} [${r + 1},${c + 1}]`
+              : `${isEs ? 'Patrón Paramétrico' : 'Parametric Pattern'} · ${isEs ? 'Cuadro' : 'Cell'} [${r + 1},${c + 1}]`;
 
             subLayer.bindTooltip(
-              `<strong>Cuadro [${r + 1},${c + 1}] · NDVI: ${ndviVal.toFixed(2)}</strong><br>${statusTxt}<br><em>${isEs ? 'Clic para explicar este cuadro' : 'Click for cell details'}</em>`,
+              `<strong>${satCell ? 'Sentinel-2' : (isEs ? 'Simulado' : 'Modeled')} [${r + 1},${c + 1}] · NDVI: ${ndviVal.toFixed(2)}</strong><br>${statusTxt}<br><em>${isEs ? 'Clic para explicar este cuadro' : 'Click for cell details'}</em>`,
               { sticky: true }
             );
 
             subLayer.bindPopup(`
-              <div style="font-family:Inter,sans-serif; font-size:12.5px; min-width:210px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                  <strong>Sentinel-2 (10 m) · ${isEs ? 'Cuadro' : 'Cell'} [${r + 1},${c + 1}]</strong>
+              <div style="font-family:Inter,sans-serif; font-size:12.5px; min-width:215px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; gap:6px;">
+                  <strong>${sourceHeader}</strong>
                   <span style="display:inline-block; padding:2px 8px; border-radius:100px; background:${cellColor}; color:#fff; font-weight:700;">NDVI ${ndviVal.toFixed(2)}</span>
                 </div>
-                <p style="margin-bottom:5px;"><strong>${isEs ? 'Estado:' : 'Status:'}</strong> ${statusTxt}</p>
+                <p style="margin-bottom:5px;"><strong>${isEs ? 'Clasificación:' : 'Class:'}</strong> ${statusTxt}</p>
                 <p style="margin-bottom:5px;"><strong>${isEs ? 'Superficie:' : 'Area:'}</strong> ${cellM2.toLocaleString(isEs ? 'es-AR' : 'en-US')} m²</p>
-                <p style="margin-bottom:5px;"><strong>${isEs ? 'Espectro:' : 'Bands:'}</strong> NIR=${nirRefl} · Red=${redRefl}<br><code>(NIR-Red)/(NIR+Red) = ${ndviVal.toFixed(2)}</code></p>
+                <p style="margin-bottom:5px;"><strong>${satCell ? (isEs ? 'Bandas L2A:' : 'L2A Bands:') : (isEs ? 'Espectro est.:' : 'Est. Bands:')}</strong> NIR=${nirRefl} · Red=${redRefl}${swirInfo}<br><code>(NIR-Red)/(NIR+Red) = ${ndviVal.toFixed(2)}</code></p>
                 <p style="margin-bottom:0; opacity:0.85;">${ndviVal < 0.20
-                  ? (isEs ? 'Este sector está expuesto a erosión eólica/hídrica y evaporación directa.' : 'Exposed to wind/water erosion and direct evaporation.')
-                  : (isEs ? 'Sector con protección superficial y captación activa de radiación.' : 'Sector with surface shield and active light interception.')}</p>
+                  ? (isEs ? 'Sector expuesto a erosión eólica/hídrica y evaporación directa.' : 'Exposed to wind/water erosion and direct evaporation.')
+                  : (isEs ? 'Sector con protección superficial y captación de radiación.' : 'Sector with surface protection and light interception.')}</p>
               </div>
             `);
 
@@ -935,6 +1249,22 @@ function renderPolygonOnMap() {
 
     CLIENT_STATE.meanNdvi = bandCounts.total > 0 ? ndviSum / bandCounts.total : initState.baseNdvi;
     updateAreaDisplay(bandCounts);
+
+    // Disparar autodetección satelital debounced si el polígono cambió respecto al último bbox consultado
+    if (!skipAutoFetch) {
+      const nextKey = [
+        Number(bbox[0].toFixed(6)),
+        Number(bbox[1].toFixed(6)),
+        Number(bbox[2].toFixed(6)),
+        Number(bbox[3].toFixed(6))
+      ].join(',');
+      if (nextKey !== CLIENT_STATE.satLastBboxKey) {
+        clearTimeout(CLIENT_STATE.satDebounceTimer);
+        CLIENT_STATE.satDebounceTimer = setTimeout(() => {
+          fetchStep1SatelliteData(false);
+        }, 550);
+      }
+    }
   } else {
     btnNext.disabled = true;
     document.getElementById('areaM2Display').textContent = '0 m²';
@@ -960,7 +1290,19 @@ function getStrategyDisplayName(st) {
 }
 
 function getStrategyLabel(st) {
-  return st.short || st.id;
+  const isEs = CLIENT_STATE.lang === 'es';
+  const raw = st.short || st.id;
+  if (isEs) return raw;
+  const mapEn = {
+    E0_Base: `E0 Base (${st.cycleYears}yr)`,
+    E1_Cob: `E1 Cover (${st.cycleYears}yr)`,
+    E2_CerInv: `E2 W. Cereal (${st.cycleYears}yr)`,
+    E3_Past: `E3 Pasture (${st.cycleYears}yr)`,
+    E4_Nina: `E4 Drought (${st.cycleYears}yr)`,
+    E5_Nino: `E5 El Niño (${st.cycleYears}yr)`
+  };
+  if (mapEn[st.id]) return mapEn[st.id];
+  return raw.replace(/\((\d+)a\)/, '($1yr)');
 }
 
 function renderStep2Strategies() {
@@ -986,9 +1328,23 @@ function renderStep2Strategies() {
       </div>
     `).join('');
 
+    const initName = isEs
+      ? getSelectedInitialFieldState(ic.prevCrop).name_es.split('(')[0].trim()
+      : getSelectedInitialFieldState(ic.prevCrop).name_en.split('(')[0].trim();
+    const tilNames = isEs
+      ? { siembra_directa: 'Siembra Directa', labranza_vertical: 'Labranza Vertical', convencional: 'Labranza Convencional' }
+      : { siembra_directa: 'No-Till', labranza_vertical: 'Vertical Tillage', convencional: 'Conventional Tillage' };
+    const tilTxt = tilNames[ic.tillage || 'siembra_directa'] || (ic.tillage || 'No-Till');
+    const globalAw = document.getElementById('inputAW')?.value || CLIENT_STATE.envContext?.suelo?.aw_mm_m?.media || '—';
+    const globalMoist = document.getElementById('inputInitMoisture')?.value || CLIENT_STATE.envContext?.suelo?.humedad_smap_inicial_pct || '—';
+    const globalSoc = document.getElementById('inputSOC')?.value || CLIENT_STATE.envContext?.suelo?.soc_g_kg?.media || '—';
+    const zoneLabel = CLIENT_STATE.envContext?.georef?.etiqueta || 'Paso 1';
+    const sourceTag = CLIENT_STATE.isLocalOverride
+      ? (isEs ? 'Calibración INTA/Propia' : 'INTA/Farm override')
+      : (isEs ? `Satélite ${zoneLabel}` : `Satellite ${zoneLabel}`);
     const initSummary = usesGlobal
-      ? (isEs ? 'Usa datos globales del lote (Paso 1 y 2) · Siembra Directa' : 'Inherits global plot data (Steps 1 & 2) · No-Till')
-      : `${getSelectedInitialFieldState(ic.prevCrop).name_es.split('(')[0].trim()} · ${ic.tillage || 'siembra_directa'} · AW ${ic.awMmM || 130}mm · Hum ${ic.initMoisturePct || 62}% · SOC ${ic.socGKg || 18.4}`;
+      ? `${sourceTag} · ${initName} · AW ${globalAw} mm/m · ${isEs ? 'Hum' : 'Moist'} ${globalMoist}% · SOC ${globalSoc} g/kg`
+      : `${initName} · ${tilTxt} · AW ${ic.awMmM ?? globalAw} mm/m · ${isEs ? 'Hum' : 'Moist'} ${ic.initMoisturePct ?? globalMoist}% · SOC ${ic.socGKg ?? globalSoc} g/kg`;
 
     return `
       <div class="strategy-builder-card ${st.isCustom ? 'is-custom' : ''}">
@@ -999,7 +1355,7 @@ function renderStep2Strategies() {
                 <span class="trust-dot"></span>
                 ${st.isCustom ? (isEs ? 'Personalizada' : 'Custom') : (isEs ? 'Estrategia Base' : 'Preset')} · ${st.cycleYears} ${isEs ? (st.cycleYears === 1 ? 'año' : 'años') : 'yr'}
               </span>
-              <h4 style="font-family:var(--font-serif); font-size:22px; color:var(--charcoal); line-height:1.15;">${st.short}</h4>
+              <h4 style="font-family:var(--font-serif); font-size:22px; color:var(--charcoal); line-height:1.15;">${getStrategyLabel(st)}</h4>
               <p class="muted-sub" style="font-size:12px;">${getStrategyDisplayName(st)}</p>
             </div>
           </div>
@@ -1305,13 +1661,34 @@ async function syncWithBackend() {
     document.getElementById('wEconLabel').textContent = '35%';
   }
 
+  const prevCrop = document.getElementById('prevCropInput').value;
+  const sat = CLIENT_STATE.satelliteData;
+  const satelliteInit = (prevCrop === 'satelite_actual' && sat && sat.modo === 'live_sentinel2' && sat.summary)
+    ? {
+        ndvi: sat.meanNdvi,
+        ndmi: sat.meanNdmi,
+        date: sat.date,
+        title_es: sat.summary.title_es,
+        title_en: sat.summary.title_en,
+        desc_es: sat.summary.desc_es,
+        desc_en: sat.summary.desc_en,
+        residueCoverPct: sat.summary.residueCoverPct,
+        initN_kgHa: sat.summary.initN_kgHa,
+        cnRatio: sat.summary.cnRatio,
+        pestCarryover: sat.summary.pestCarryover
+      }
+    : null;
+
   const payload = {
     lat: CLIENT_STATE.lat,
     lon: CLIENT_STATE.lon,
     areaM2: CLIENT_STATE.areaM2,
+    polygon: currentLatLngs,
+    bbox: getBboxArrayFromLatLngs(currentLatLngs),
     startDate: document.getElementById('startDateInput').value,
     cycleYears: Number(document.getElementById('cycleYearsInput').value),
-    prevCrop: document.getElementById('prevCropInput').value,
+    prevCrop,
+    satelliteInit,
     awMmM: Number(document.getElementById('inputAW').value),
     toscaCm: Number(document.getElementById('inputTosca').value),
     initMoisturePct: Number(document.getElementById('inputInitMoisture').value),
@@ -1336,6 +1713,12 @@ async function syncWithBackend() {
     if (data.ok) {
       CLIENT_STATE.simulation = data.simulation;
       CLIENT_STATE.envContext = data.envContext;
+      if (data.envContext?.satellite) {
+        CLIENT_STATE.satelliteData = data.envContext.satellite;
+        renderSatObservationBanner();
+        renderInitialStateSummaryCard();
+      }
+      applyZoneSatelliteParamsToInputs(data.envContext);
       updateEnvCards(data.envContext);
     }
   } catch (err) {
@@ -1344,6 +1727,7 @@ async function syncWithBackend() {
 }
 
 function updateEnvCards(ctx) {
+  if (!ctx) return;
   const isEs = CLIENT_STATE.lang === 'es';
   document.getElementById('jurisdictionDisplay').textContent = ctx.georef.etiqueta;
   document.getElementById('rainCardVal').textContent = `${ctx.clima.lluvia_anual_mm} ${isEs ? 'mm/año' : 'mm/yr'}`;
@@ -1356,49 +1740,212 @@ function updateEnvCards(ctx) {
     ? `IC 90%: <strong>${ctx.suelo.aw_mm_m.q05}–${ctx.suelo.aw_mm_m.q95} mm/m</strong>.`
     : `90% CI: <strong>${ctx.suelo.aw_mm_m.q05}–${ctx.suelo.aw_mm_m.q95} mm/m</strong>.`;
 
+  const climaBadge = document.getElementById('climaSourceBadge');
+  if (climaBadge) {
+    const isLiveC = ctx.clima?.modo === 'live_api';
+    climaBadge.className = `trust-badge ${isLiveC ? 'trust-green' : 'trust-yellow'}`;
+    climaBadge.innerHTML = `<span class="trust-dot"></span> ${isLiveC ? 'NASA POWER (En vivo)' : 'NASA POWER (Respaldo)'}`;
+  }
+  const soilBadge = document.getElementById('soilSourceBadge');
+  if (soilBadge) {
+    const isLiveS = ctx.suelo?.modo === 'live_api';
+    soilBadge.className = `trust-badge ${isLiveS ? 'trust-green' : 'trust-yellow'}`;
+    soilBadge.innerHTML = `<span class="trust-dot"></span> ${isLiveS ? 'SoilGrids v2.0 (En vivo)' : 'SoilGrids + GeoINTA (Respaldo)'}`;
+  }
+
+  const smapBadge = document.getElementById('smapSourceBadge');
+  const smapValEl = document.getElementById('smapCardVal');
+  const smapSub = document.getElementById('smapCardSub');
+  const isLiveM = ctx.suelo?.humedad_modo === 'live_api';
+  if (smapBadge) {
+    smapBadge.className = `trust-badge ${isLiveM ? 'trust-green' : 'trust-yellow'}`;
+    smapBadge.innerHTML = `<span class="trust-dot"></span> ${isLiveM ? 'NASA GWETROOT + Open-Meteo' : 'Humedad Respaldo'}`;
+  }
+  const volM3 = Number.isFinite(Number(ctx.suelo?.humedad_volumetrica_m3)) ? Number(ctx.suelo.humedad_volumetrica_m3) : 0.21;
+  if (smapValEl) {
+    smapValEl.textContent = `${isEs ? volM3.toFixed(2).replace('.', ',') : volM3.toFixed(2)} m³/m³`;
+  }
   const initSt = getSelectedInitialFieldState();
-  if (initSt) {
-    const moistVal = Number(document.getElementById('inputInitMoisture').value) || initSt.initMoisturePct;
-    const smapSub = document.getElementById('smapCardSub');
-    if (smapSub) {
-      smapSub.textContent = isEs
-        ? `Carga inicial del ${moistVal}% en 0–100 cm (${initSt.name_es.split('(')[0].trim()}).`
-        : `${moistVal}% initial profile fill in 0–100 cm (${initSt.name_en.split('(')[0].trim()}).`;
+  const inputMoistRaw = document.getElementById('inputInitMoisture')?.value;
+  const moistVal = inputMoistRaw !== '' && Number.isFinite(Number(inputMoistRaw))
+    ? Number(inputMoistRaw)
+    : (Number.isFinite(Number(ctx.suelo?.humedad_smap_inicial_pct)) ? Number(ctx.suelo.humedad_smap_inicial_pct) : (initSt?.initMoisturePct ?? 62));
+  if (smapSub && initSt) {
+    const stName = isEs ? initSt.name_es.split('(')[0].replace(/^📡\s*/, '').trim() : initSt.name_en.split('(')[0].replace(/^📡\s*/, '').trim();
+    const dtTxt = ctx.suelo?.humedad_fecha ? ` · ${ctx.suelo.humedad_fecha}` : '';
+    smapSub.textContent = isEs
+      ? `Carga inicial del ${moistVal}% en 0–100 cm (${stName}${dtTxt}).`
+      : `${moistVal}% initial profile fill in 0–100 cm (${stName}${dtTxt}).`;
+  }
+
+  const magyp = ctx.estadisticas_magyp || {};
+  const magypBadge = document.getElementById('magypSourceBadge');
+  const magypVal = document.getElementById('magypCardVal');
+  const magypSub = document.getElementById('magypCardSub');
+  const isLocalM = magyp.es_local !== false;
+  if (magypBadge) {
+    magypBadge.className = `trust-badge ${isLocalM ? 'trust-green' : 'trust-yellow'}`;
+    magypBadge.innerHTML = `<span class="trust-dot"></span> ${isLocalM ? 'MAGyP / INDEC (AR)' : (isEs ? 'Referencia FAO-33' : 'FAO-33 Reference')}`;
+  }
+  if (magypVal) {
+    magypVal.textContent = isLocalM ? 'CV 17%–34%' : 'FAO-33 Ypot';
+  }
+  if (magypSub) {
+    magypSub.textContent = isLocalM
+      ? (isEs ? 'Sorgo: 5.400 kg/ha (CV 17%). Maíz: 6.900 kg/ha.' : 'Sorghum: 5,400 kg/ha (CV 17%). Maize: 6,900 kg/ha.')
+      : (isEs ? (magyp.ambito_es || 'Fuera de región MAGyP AR — rinde potencial FAO-33 ajustado por NASA POWER.') : (magyp.ambito_en || 'Outside MAGyP AR — FAO-33 yields driven by local NASA POWER climate.'));
+  }
+}
+
+function updateCalibrationModeUi() {
+  const isOverride = Boolean(CLIENT_STATE.isLocalOverride);
+  ['inputAW', 'inputInitMoisture', 'inputSOC', 'inputTosca'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('is-overridden', isOverride);
+  });
+
+  const badge = document.getElementById('calibrationStatusBadge');
+  if (badge) {
+    badge.className = `trust-badge ${isOverride ? 'trust-green' : 'trust-yellow'}`;
+    badge.innerHTML = `<span class="trust-dot"></span> <span>${t(isOverride ? 'badge_field_mode' : 'badge_sat_mode')}</span>`;
+  }
+
+  const editBtn = document.getElementById('btnToggleManualOverride');
+  if (editBtn) {
+    editBtn.classList.toggle('btn-forest', isOverride);
+    editBtn.classList.toggle('btn-outline', !isOverride);
+    editBtn.innerHTML = `✏️ <span>${t(isOverride ? 'btn_edit_inta_active' : 'btn_edit_inta')}</span>`;
+  }
+}
+
+function applyZoneSatelliteParamsToInputs(ctx) {
+  const isEs = CLIENT_STATE.lang === 'es';
+  const suelo = ctx?.suelo || {};
+  const georef = ctx?.georef || {};
+  const sat = CLIENT_STATE.satelliteData || ctx?.satellite;
+  const st = getSelectedInitialFieldState();
+
+  const satAw = Number.isFinite(Number(suelo.aw_mm_m?.media)) ? Number(suelo.aw_mm_m.media) : null;
+  const rawSoc = suelo.soc_g_kg;
+  const satSoc = typeof rawSoc === 'number'
+    ? (Number.isFinite(rawSoc) ? rawSoc : null)
+    : (Number.isFinite(Number(rawSoc?.media)) ? Number(rawSoc.media) : null);
+  const satMoist = Number.isFinite(Number(suelo.humedad_smap_inicial_pct)) ? Number(suelo.humedad_smap_inicial_pct) : null;
+  const satTosca = Number.isFinite(Number(suelo.profundidad_util_cm)) ? Number(suelo.profundidad_util_cm) : 100;
+
+  if (!CLIENT_STATE.isLocalOverride) {
+    if (satAw !== null) document.getElementById('inputAW').value = satAw;
+    if (satSoc !== null) document.getElementById('inputSOC').value = satSoc;
+    const toscaEl = document.getElementById('inputTosca');
+    if (toscaEl && [50, 75, 100].includes(satTosca)) {
+      toscaEl.value = String(satTosca);
     }
+    const prevId = document.getElementById('prevCropInput')?.value || 'satelite_actual';
+    if (prevId === 'satelite_actual') {
+      if (satMoist !== null) document.getElementById('inputInitMoisture').value = satMoist;
+    } else if (st) {
+      document.getElementById('inputInitMoisture').value = st.initMoisturePct;
+    }
+  }
+
+  const refPrefix = isEs ? '🛰️ Satélite Paso 1:' : '🛰️ Step 1 Satellite:';
+  const setRef = (id, htmlVal) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = `${refPrefix} <strong>${htmlVal}</strong>`;
+  };
+  setRef('satRefAW', satAw !== null ? `${satAw} mm/m` : '—');
+  setRef('satRefMoist', satMoist !== null ? `${satMoist}%` : '—');
+  setRef('satRefSOC', satSoc !== null ? `${satSoc} g/kg` : '—');
+  setRef('satRefTosca', `${satTosca} cm`);
+
+  const banner = document.getElementById('step2ZoneOriginBanner');
+  if (banner) {
+    const locName = georef.etiqueta || formatCoords(CLIENT_STATE.lat, CLIENT_STATE.lon, isEs);
+    const areaTxt = isEs
+      ? `${CLIENT_STATE.areaHa.toFixed(2).replace('.', ',')} ha`
+      : `${CLIENT_STATE.areaHa.toFixed(2)} ha`;
+    const soilSrc = suelo.modo === 'live_api'
+      ? (isEs ? 'SoilGrids 250 m (En vivo)' : 'SoilGrids 250 m (Live)')
+      : (isEs ? 'SoilGrids (Estimación zonal)' : 'SoilGrids (Zonal est.)');
+    const s2Txt = (sat && sat.modo === 'live_sentinel2')
+      ? `Sentinel-2 (${sat.date}, NDVI ${Number(sat.meanNdvi).toFixed(2)})`
+      : (isEs ? 'Sentinel-2 sin escena reciente' : 'Sentinel-2 no recent pass');
+
+    banner.innerHTML = isEs
+      ? `<span>🛰️ <strong>Parámetros cargados desde la zona del Paso 1:</strong> ${locName} (${formatCoords(CLIENT_STATE.lat, CLIENT_STATE.lon, true)} · ${areaTxt})</span>
+         <span>• <strong>Suelo:</strong> ${soilSrc}${suelo.textura ? ` · ${suelo.textura}` : ''}</span>
+         <span>• <strong>Sensores:</strong> ${s2Txt} · ${suelo.humedad_fuente || 'NASA GWETROOT + Open-Meteo'}</span>`
+      : `<span>🛰️ <strong>Loaded from Step 1 polygon:</strong> ${locName} (${formatCoords(CLIENT_STATE.lat, CLIENT_STATE.lon, false)} · ${areaTxt})</span>
+         <span>• <strong>Soil:</strong> ${soilSrc}${suelo.textura ? ` · ${suelo.textura}` : ''}</span>
+         <span>• <strong>Sensors:</strong> ${s2Txt} · ${suelo.humedad_fuente || 'NASA GWETROOT + Open-Meteo'}</span>`;
+  }
+
+  updateCalibrationModeUi();
+}
+
+function toggleManualOverrideMode() {
+  if (CLIENT_STATE.isLocalOverride) {
+    resetLocalOverrides();
+  } else {
+    markLocalOverride();
+    const awEl = document.getElementById('inputAW');
+    if (awEl) awEl.focus();
   }
 }
 
 function markLocalOverride() {
   CLIENT_STATE.isLocalOverride = true;
-  ['inputAW', 'inputInitMoisture', 'inputSOC', 'inputTosca'].forEach((id) => {
-    document.getElementById(id).classList.add('is-overridden');
-  });
-  const badge = document.getElementById('calibrationStatusBadge');
-  badge.className = 'trust-badge trust-green';
-  badge.innerHTML = `<span class="trust-dot"></span> <span>${t('badge_field_mode')}</span>`;
+  updateCalibrationModeUi();
+  renderStep2Strategies();
 }
 
-function resetLocalOverrides() {
+async function resetLocalOverrides() {
   CLIENT_STATE.isLocalOverride = false;
-  const st = getSelectedInitialFieldState();
-  document.getElementById('inputAW').value = CLIENT_STATE.envContext?.suelo?.aw_mm_m?.media || 130;
-  document.getElementById('inputInitMoisture').value = st ? st.initMoisturePct : 62;
-  document.getElementById('inputSOC').value = CLIENT_STATE.envContext?.suelo?.soc_g_kg?.media || 18.4;
-  document.getElementById('inputTosca').value = 100;
-  ['inputAW', 'inputInitMoisture', 'inputSOC', 'inputTosca'].forEach((id) => {
-    document.getElementById(id).classList.remove('is-overridden');
-  });
-  const badge = document.getElementById('calibrationStatusBadge');
-  badge.className = 'trust-badge trust-yellow';
-  badge.innerHTML = `<span class="trust-dot"></span> <span>${t('badge_sat_mode')}</span>`;
+  applyZoneSatelliteParamsToInputs(CLIENT_STATE.envContext);
+  updateEnvCards(CLIENT_STATE.envContext);
+  renderStep2Strategies();
+  if (CLIENT_STATE.currentStep === 2) {
+    await syncWithBackend();
+    applyZoneSatelliteParamsToInputs(CLIENT_STATE.envContext);
+    renderStep2Strategies();
+  }
 }
 
 /* ==========================================================================
    8. PASO 3: LÍNEA DE TIEMPO INTERACTIVA Y KPIs CON POPUP EXPLICATIVO
    ========================================================================== */
+function localizeMonthShort(label, isEs = CLIENT_STATE.lang === 'es') {
+  if (isEs || !label) return label;
+  return String(label)
+    .replace(/^Ene\b/, 'Jan')
+    .replace(/^Abr\b/, 'Apr')
+    .replace(/^Ago\b/, 'Aug')
+    .replace(/^Dic\b/, 'Dec');
+}
+
+function localizeFullDate(fullDate, isEs = CLIENT_STATE.lang === 'es') {
+  if (isEs || !fullDate) return fullDate;
+  const map = {
+    Enero: 'January', Febrero: 'February', Marzo: 'March', Abril: 'April',
+    Mayo: 'May', Junio: 'June', Julio: 'July', Agosto: 'August',
+    Septiembre: 'September', Octubre: 'October', Noviembre: 'November', Diciembre: 'December'
+  };
+  return String(fullDate).replace(/^[A-Za-zÁÉÍÓÚáéíóú]+/, (m) => map[m] || m);
+}
+
+function getTimelineCropLabel(item, isEs = CLIENT_STATE.lang === 'es') {
+  if (isEs) return item.cropLabel;
+  if (item.cropLabel_en) return item.cropLabel_en;
+  const base = getCropLabelById('winter', item.cropId) !== item.cropId
+    ? getCropLabelById('winter', item.cropId)
+    : getCropLabelById('summer', item.cropId);
+  return base !== item.cropId ? base : item.cropLabel;
+}
+
 function renderTimelineSection() {
   const strategies = CLIENT_STATE.simulation.strategies;
   const pillsContainer = document.getElementById('timelineStrategyPills');
+  const isEs = CLIENT_STATE.lang === 'es';
 
   pillsContainer.innerHTML = strategies.map((st) => `
     <button class="strategy-pill ${st.id === CLIENT_STATE.selectedStrategyId ? 'active' : ''}"
@@ -1417,24 +1964,29 @@ function renderTimelineSection() {
   }
 
   renderTimelineChartJs(series, baselineStrategy.timeline, activeStrategy);
+  renderTimelineChartGuide(series, baselineStrategy.timeline, activeStrategy);
 
   const grid = document.getElementById('monthTrackGrid');
-  grid.innerHTML = series.map((item) => `
-    <div class="month-cell state-${item.stageType} ${item.index === CLIENT_STATE.selectedMonthIndex ? 'selected' : ''}"
-         onclick="selectTimelineMonth(${item.index})">
-      <div class="month-cell-date">${item.label}</div>
-      <div class="month-cell-crop" title="${item.cropLabel}">${item.cropLabel}</div>
-      <div class="month-cell-mini">AW ${item.soilWater}mm · NDVI ${item.ndvi.toFixed(2)}</div>
-    </div>
-  `).join('');
+  grid.innerHTML = series.map((item) => {
+    const locDate = localizeMonthShort(item.label, isEs);
+    const locCrop = getTimelineCropLabel(item, isEs);
+    return `
+      <div class="month-cell state-${item.stageType} ${item.index === CLIENT_STATE.selectedMonthIndex ? 'selected' : ''}"
+           onclick="selectTimelineMonth(${item.index})">
+        <div class="month-cell-date">${locDate}</div>
+        <div class="month-cell-crop" title="${locCrop}">${locCrop}</div>
+        <div class="month-cell-mini">AW ${item.soilWater}mm · NDVI ${item.ndvi.toFixed(2)}</div>
+      </div>
+    `;
+  }).join('');
 
   renderFootnoteInspector(series[CLIENT_STATE.selectedMonthIndex], activeStrategy, baselineStrategy.timeline[CLIENT_STATE.selectedMonthIndex]);
 }
 
 function renderTimelineChartJs(series, baselineSeries, activeStrategy) {
   const ctx = document.getElementById('timelineChartCanvas').getContext('2d');
-  const labels = series.map((d) => d.label);
   const isEs = CLIENT_STATE.lang === 'es';
+  const labels = series.map((d) => localizeMonthShort(d.label, isEs));
   const showCompare = document.getElementById('compareBaselineCheck').checked && activeStrategy.id !== 'E0_Base';
   const tc = getChartThemeColors();
 
@@ -1524,11 +2076,144 @@ function renderTimelineChartJs(series, baselineSeries, activeStrategy) {
   });
 }
 
+function updateChartGuideToggleButton() {
+  const btn = document.getElementById('btnToggleChartGuide');
+  const body = document.getElementById('step3ChartGuideBody');
+  const expanded = CLIENT_STATE.chartGuideExpanded !== false;
+  if (body) body.style.display = expanded ? 'block' : 'none';
+  if (btn) {
+    btn.innerHTML = `📖 <span>${t(expanded ? 's3_btn_toggle_guide' : 's3_btn_show_guide')}</span>`;
+  }
+}
+
+function toggleChartGuideDetails() {
+  CLIENT_STATE.chartGuideExpanded = !CLIENT_STATE.chartGuideExpanded;
+  updateChartGuideToggleButton();
+}
+
+function startChartMiniTutorial() {
+  CLIENT_STATE.chartGuideExpanded = true;
+  updateChartGuideToggleButton();
+  startStepPointerTutorial(3, true);
+  jumpToPointerTutorialSlide(1);
+}
+
+function renderTimelineChartGuide(series, baselineSeries, activeStrategy) {
+  const grid = document.getElementById('timelineTrendsGrid');
+  if (!grid || !Array.isArray(series) || series.length === 0) return;
+
+  const isEs = CLIENT_STATE.lang === 'es';
+  const tc = getChartThemeColors();
+  const n = series.length;
+
+  const avgWater = Math.round(series.reduce((acc, d) => acc + Number(d.soilWater || 0), 0) / n);
+  let maxW = series[0];
+  let minW = series[0];
+  let stressMonths = 0;
+  series.forEach((d) => {
+    if (d.soilWater > maxW.soilWater) maxW = d;
+    if (d.soilWater < minW.soilWater) minW = d;
+    if (Number.isFinite(d.ks) && d.ks < 0.75) stressMonths += 1;
+  });
+
+  const hasBaseComp = Array.isArray(baselineSeries) && baselineSeries.length >= n && activeStrategy.id !== 'E0_Base';
+  const baseAvgWater = hasBaseComp
+    ? Math.round(baselineSeries.slice(0, n).reduce((acc, d) => acc + Number(d.soilWater || 0), 0) / n)
+    : avgWater;
+  const waterDelta = avgWater - baseAvgWater;
+  const waterClass = stressMonths > Math.ceil(n * 0.28) ? 'is-neg' : (waterDelta >= 4 || stressMonths <= 1 ? 'is-pos' : 'is-flat');
+
+  const avgNdvi = series.reduce((acc, d) => acc + Number(d.ndvi || 0), 0) / n;
+  const covMonths = series.filter((d) => Number(d.ndvi) >= 0.30).length;
+  const bareMonths = series.filter((d) => Number(d.ndvi) < 0.20).length;
+  const covPct = Math.round((covMonths / n) * 100);
+  const ndviClass = bareMonths === 0 && covPct >= 65 ? 'is-pos' : (bareMonths >= 4 || covPct < 45 ? 'is-neg' : 'is-flat');
+
+  const startN = Math.round(series[0].nAvail || 0);
+  const endN = Math.round(series[n - 1].nAvail || 0);
+  const maxN = series.reduce((best, d) => (d.nAvail > best.nAvail ? d : best), series[0]);
+  const totalLeach = Math.round(series.reduce((acc, d) => acc + Number(d.nLeach || 0), 0));
+  const nDiff = endN - startN;
+  const nClass = nDiff >= 5 || totalLeach <= 15 ? (nDiff >= -5 ? 'is-pos' : 'is-flat') : (totalLeach > 35 ? 'is-neg' : 'is-flat');
+
+  const endSocLot = Number(series[n - 1].cumSocLotTons || 0);
+  const socRateHa = Number(activeStrategy.summaryMetrics?.annualSocRate ?? 0);
+  const socClass = endSocLot >= 0.15 ? 'is-pos' : (endSocLot <= -0.15 ? 'is-neg' : 'is-flat');
+
+  const cards = [
+    {
+      swatch: tc.primaryLine,
+      name: isEs ? 'Agua Útil del Perfil (mm)' : 'Profile Available Water (mm)',
+      axis: isEs ? 'Eje Izquierdo' : 'Left Axis',
+      meaning: isEs
+        ? 'Mide el tanque de agua disponible en raíces (0–100 cm). Cuando la curva sube hay recarga por lluvia o ahorro en barbecho; cuando cae abruptamente hay alto consumo de cultivo o sequía. La línea roja punteada es el Testigo Base.'
+        : 'Tracks plant-available soil water (0–100 cm). Rising slopes indicate rainfall recharge or fallow storage; steep drops show high crop demand or drought. The dashed red line shows the Baseline Strategy.',
+      slopeClass: waterClass,
+      trend: isEs
+        ? `${hasBaseComp ? `<strong>${waterDelta >= 0 ? '+' : ''}${waterDelta} mm</strong> vs. Testigo E0 en promedio · ` : ''}Promedio ${avgWater} mm (pico ${maxW.soilWater} mm en ${localizeMonthShort(maxW.label, true)}, piso ${minW.soilWater} mm en ${localizeMonthShort(minW.label, true)})${stressMonths > 0 ? ` · ${stressMonths} mes(es) con estrés Ks < 0,75` : ' · Sin estrés severo'}.`
+        : `${hasBaseComp ? `<strong>${waterDelta >= 0 ? '+' : ''}${waterDelta} mm</strong> vs. E0 Baseline avg · ` : ''}Mean ${avgWater} mm (peak ${maxW.soilWater} mm in ${localizeMonthShort(maxW.label, false)}, low ${minW.soilWater} mm in ${localizeMonthShort(minW.label, false)})${stressMonths > 0 ? ` · ${stressMonths} month(s) with Ks < 0.75 stress` : ' · No severe stress'}.`
+    },
+    {
+      swatch: '#2a9d8f',
+      name: isEs ? 'Cobertura Vegetal NDVI (×100)' : 'Vegetation Cover NDVI (×100)',
+      axis: isEs ? 'Eje Izquierdo' : 'Left Axis',
+      meaning: isEs
+        ? 'Refleja cuánto vigor verde protege el suelo (0 a 90 pts = NDVI 0,00 a 0,90). Picos altos marcan cultivos activos; valles por debajo de 20 indican suelo desnudo vulnerable a erosión y malezas.'
+        : 'Shows green canopy shield (0–90 scale = NDVI 0.00–0.90). Peaks indicate vigorous crops; valleys below 20 mark bare soil exposed to erosion and runoff.',
+      slopeClass: ndviClass,
+      trend: isEs
+        ? `NDVI medio <strong>${avgNdvi.toFixed(2).replace('.', ',')}</strong> · <strong>${covPct}%</strong> del ciclo con cobertura viva (${covMonths}/${n} meses) y <strong>${bareMonths}</strong> mes(es) en suelo desnudo.`
+        : `Mean NDVI <strong>${avgNdvi.toFixed(2)}</strong> · <strong>${covPct}%</strong> of cycle with living cover (${covMonths}/${n} months) and <strong>${bareMonths}</strong> bare-soil month(s).`
+    },
+    {
+      swatch: '#4ea8de',
+      name: isEs ? 'Nitrógeno Disponible (kg N/ha)' : 'Available Nitrogen (kg N/ha)',
+      axis: isEs ? 'Eje Izquierdo' : 'Left Axis',
+      meaning: isEs
+        ? 'Muestra el balance mineral del suelo: sube con leguminosas fijadoras (soja, vicia, alfalfa) y mineralización; baja por absorción de gramíneas (maíz, trigo) o lavado en profundidad.'
+        : 'Tracks mineral soil N: increases after legume biological fixation (soy, vetch, alfalfa) and mineralization; drops during high cereal uptake (maize, wheat) or leaching.',
+      slopeClass: nClass,
+      trend: isEs
+        ? `Parte en ${startN} kg/ha y cierra en <strong>${endN} kg/ha</strong> (${nDiff >= 0 ? '+' : ''}${nDiff} kg/ha) · Pico de ${Math.round(maxN.nAvail)} kg/ha en ${localizeMonthShort(maxN.label, true)} · Lixiviación acumulada: ${totalLeach} kg N/ha.`
+        : `Starts at ${startN} kg/ha and ends at <strong>${endN} kg/ha</strong> (${nDiff >= 0 ? '+' : ''}${nDiff} kg/ha) · Peak ${Math.round(maxN.nAvail)} kg/ha in ${localizeMonthShort(maxN.label, false)} · Cumulative leaching: ${totalLeach} kg N/ha.`
+    },
+    {
+      swatch: '#e08e45',
+      name: isEs ? 'Carbono Orgánico Acumulado (t C)' : 'Plot Accumulated Carbon (t C)',
+      axis: isEs ? 'Eje Derecho' : 'Right Axis',
+      meaning: isEs
+        ? 'Es la tendencia estructural de salud edáfica del lote completo (ΔSOC según modelo AMG). Si la pendiente asciende, el sistema secuestra carbono; si desciende, degrada materia orgánica.'
+        : 'Structural soil-health trend across your whole parcel (AMG ΔSOC model). Upward slope = carbon sequestration; downward slope = organic matter depletion.',
+      slopeClass: socClass,
+      trend: isEs
+        ? `${endSocLot >= 0.15 ? '📈 Tendencia regenerativa' : (endSocLot <= -0.15 ? '📉 Tendencia extractiva' : '➖ Equilibrio de carbono')}: <strong>${endSocLot >= 0 ? '+' : ''}${endSocLot.toFixed(2).replace('.', ',')} t C</strong> en el lote (${socRateHa >= 0 ? '+' : ''}${socRateHa.toFixed(2).replace('.', ',')} Mg C/ha/año).`
+        : `${endSocLot >= 0.15 ? '📈 Regenerative trend' : (endSocLot <= -0.15 ? '📉 Depleting trend' : '➖ Carbon equilibrium')}: <strong>${endSocLot >= 0 ? '+' : ''}${endSocLot.toFixed(2)} t C</strong> across plot (${socRateHa >= 0 ? '+' : ''}${socRateHa.toFixed(2)} Mg C/ha/yr).`
+    }
+  ];
+
+  grid.innerHTML = cards.map((c) => `
+    <div class="trend-explain-card">
+      <div class="trend-explain-head">
+        <span class="trend-explain-name"><span class="trend-swatch" style="background:${c.swatch};"></span> ${c.name}</span>
+        <span class="trend-axis-tag">${c.axis}</span>
+      </div>
+      <p class="trend-meaning-txt">${c.meaning}</p>
+      <div class="trend-slope-pill ${c.slopeClass}">
+        <strong>${isEs ? 'Tendencia actual:' : 'Current trend:'}</strong> ${c.trend}
+      </div>
+    </div>
+  `).join('');
+
+  updateChartGuideToggleButton();
+}
+
 function renderFootnoteInspector(item, strategy, baseItem) {
   const isEs = CLIENT_STATE.lang === 'es';
+  const locFullDate = localizeFullDate(item.fullDate, isEs);
+  const locCrop = getTimelineCropLabel(item, isEs);
   document.getElementById('fnTitle').textContent = isEs
-    ? `Mes ${item.index + 1} de ${strategy.monthsCount} (${strategy.cycleYears}a) — ${item.fullDate} · ${item.cropLabel}`
-    : `Month ${item.index + 1} of ${strategy.monthsCount} (${strategy.cycleYears}y) — ${item.fullDate} · ${item.cropLabel}`;
+    ? `Mes ${item.index + 1} de ${strategy.monthsCount} (${strategy.cycleYears}a) — ${locFullDate} · ${locCrop}`
+    : `Month ${item.index + 1} of ${strategy.monthsCount} (${strategy.cycleYears}y) — ${locFullDate} · ${locCrop}`;
 
   const badge = document.getElementById('fnStateBadge');
   if (item.stageType === 'bare') {
@@ -1879,7 +2564,7 @@ function openInfoPopup(key) {
 
   document.getElementById('modalBadgeText').textContent = t('mod_badge');
   document.getElementById('modalEqTitle').textContent = isEs ? (eq.title_es || eq.title) : (eq.title_en || eq.title_es);
-  document.getElementById('modalPlainBox').innerHTML = `<strong>💡 ${isEs ? 'En palabras simples:' : 'In plain words:'}</strong> ${isEs ? eq.plain_es : eq.plain_en}`;
+  document.getElementById('modalPlainBox').innerHTML = `<strong>💡 ${isEs ? 'Resumen de la información:' : 'Information summary:'}</strong> ${isEs ? eq.plain_es : eq.plain_en}`;
   document.getElementById('modalContextScoreBox').style.display = 'none';
   document.getElementById('modalEqFormula').textContent = eq.formula;
   document.getElementById('modalInterpBox').innerHTML = `<strong>📊 ${isEs ? 'Interpretación práctica:' : 'Practical interpretation:'}</strong> ${isEs ? eq.interp_es : eq.interp_en}`;
@@ -1935,8 +2620,8 @@ function openStrategyResultPopup(strategyId) {
   document.getElementById('modalBadgeText').textContent = isEs ? `Radiografía Completa de Resultados · ${st.short}` : `Full Result Breakdown · ${st.short}`;
   document.getElementById('modalEqTitle').textContent = getStrategyDisplayName(st);
   document.getElementById('modalPlainBox').innerHTML = isEs
-    ? `<strong>💡 Resumen en palabras simples:</strong> Esta rotación obtuvo <strong>${st.saw15.toFixed(2)} pts</strong> en promedio ponderado (SAW-15) y <strong>${st.topsis15.toFixed(2)} pts</strong> en el filtro exigente TOPSIS-15. ${gap > 12 ? '⚠️ Atención: TOPSIS cae mucho respecto a SAW porque algún criterio crítico (suelo desnudo o erosión) está muy bajo.' : '✅ Excelente equilibrio entre productividad económica y cuidado del suelo.'}`
-    : `<strong>💡 Plain summary:</strong> This strategy scored <strong>${st.saw15.toFixed(2)} pts</strong> in weighted SAW-15 and <strong>${st.topsis15.toFixed(2)} pts</strong> in non-compensatory TOPSIS-15. ${gap > 12 ? '⚠️ Notice TOPSIS drops well below SAW because one or more critical soil/erosion indicators are severely degraded.' : '✅ Well balanced between cash returns and soil resilience.'}`;
+    ? `<strong>💡 Diagnóstico general:</strong> Esta rotación obtuvo <strong>${st.saw15.toFixed(2)} pts</strong> en promedio ponderado (SAW-15) y <strong>${st.topsis15.toFixed(2)} pts</strong> en el filtro exigente TOPSIS-15. ${gap > 12 ? '⚠️ Atención: TOPSIS cae mucho respecto a SAW porque algún criterio crítico (suelo desnudo o erosión) está muy bajo.' : '✅ Excelente equilibrio entre productividad económica y cuidado del suelo.'}`
+    : `<strong>💡 Overall assessment:</strong> This strategy scored <strong>${st.saw15.toFixed(2)} pts</strong> in weighted SAW-15 and <strong>${st.topsis15.toFixed(2)} pts</strong> in non-compensatory TOPSIS-15. ${gap > 12 ? '⚠️ Notice TOPSIS drops well below SAW because one or more critical soil/erosion indicators are severely degraded.' : '✅ Well balanced between cash returns and soil resilience.'}`;
 
   const aptInfo = st.aptitude
     ? `<br>• ${isEs ? 'Filtro Aptitud Q0.05–Q0.95:' : 'Aptitude Filter (Q0.05–Q0.95):'} <strong>${isEs ? st.aptitude.label_es : st.aptitude.label_en}</strong> — ${isEs ? st.aptitude.reason_es : st.aptitude.reason_en}`
@@ -1967,7 +2652,7 @@ function openStrategyResultPopup(strategyId) {
   document.getElementById('modalInterpBox').innerHTML = isEs
     ? `<strong>Condiciones iniciales aplicadas:</strong> ${st.initialConditions.useGlobal ? 'Parámetros globales del lote' : `Personalizadas (Labranza: ${st.initialConditions.tillage}, AW: ${st.initialConditions.awMmM}mm, Humedad: ${st.initialConditions.initMoisturePct}%)`}`
     : `<strong>Initial conditions used:</strong> ${st.initialConditions.useGlobal ? 'Inherited global plot settings' : `Custom (${st.initialConditions.tillage}, AW ${st.initialConditions.awMmM}mm, Moist ${st.initialConditions.initMoisturePct}%)`}`;
-  document.getElementById('modalEqSource').textContent = `Field Shift v4.0 · Extremos térmicos: ${CLIENT_STATE.simulation.extremesSource || 'serie calibrada'}.`;
+  document.getElementById('modalEqSource').textContent = `Field Shift v5.0 · ${isEs ? 'Extremos térmicos:' : 'Thermal extremes:'} ${CLIENT_STATE.simulation.extremesSource || (isEs ? 'serie calibrada' : 'calibrated series')}.`;
 
   document.getElementById('equationModal').classList.add('open');
 }
@@ -2091,7 +2776,7 @@ const STEP_TUTORIALS = {
       selector: '#map',
       title_es: '3° Delimitá tu lote y tocá los cuadros NDVI',
       title_en: '3rd Mark plot corners & inspect NDVI squares',
-      desc_es: 'Hacé clic en el mapa para dibujar tu lote o tocá cualquier cuadro de color para ver su valor NDVI exacto.',
+      desc_es: 'Haz clic en el mapa para dibujar tu lote o tocá cualquier cuadro de color para ver su valor NDVI exacto.',
       desc_en: 'Click map corners to adjust your parcel or tap any colored grid square to inspect exact NDVI.'
     },
     {
@@ -2128,47 +2813,61 @@ const STEP_TUTORIALS = {
       selector: '#btnSubmitStrategiesAnalyze',
       title_es: '4° Mandá todo al motor de análisis',
       title_en: '4th Send all strategies to analyze',
-      desc_es: 'Hacé clic aquí para correr el balance FAO-56, rendimientos FAO-33, aptitud Q0.05–Q0.95 y ranking multicriterio.',
+      desc_es: 'Haz clic aquí para correr el balance FAO-56, rendimientos FAO-33, aptitud Q0.05–Q0.95 y ranking multicriterio.',
       desc_en: 'Click here to run the FAO-56 balance, FAO-33 yields, Q0.05–Q0.95 aptitude check, and MCDA ranking.'
     }
   ],
   3: [
     {
       selector: '#timelineStrategyPills',
-      title_es: '1° Elegí qué estrategia recorrer',
+      title_es: '1° Elige qué estrategia recorrer',
       title_en: '1st Pick a strategy to inspect',
-      desc_es: 'Empezá cambiando entre estrategias acá para comparar su evolución hídrica y de carbono mes a mes.',
+      desc_es: 'Empieza cambiando entre estrategias para comparar su evolución hídrica y de carbono mes a mes.',
       desc_en: 'Switch between evaluated strategies here to compare monthly soil water and carbon paths.'
     },
     {
+      selector: '#timelineChartCanvas',
+      title_es: '2° Lee las 4 curvas y ambos ejes del gráfico',
+      title_en: '2nd Read the 4 chart curves & dual axes',
+      desc_es: 'Eje izquierdo: Agua Útil (mm), NDVI (×100) y Nitrógeno; línea roja punteada = Testigo Base. Eje derecho: Carbono Acumulado (t C). Tocá cualquier mes del gráfico para seleccionarlo.',
+      desc_en: 'Left axis: Available Water (mm), NDVI (×100) & N; dashed red line = Baseline. Right axis: Plot Carbon (t C). Click any point to inspect that month.'
+    },
+    {
+      selector: '#step3ChartGuideBox',
+      title_es: '3° Revisa el significado y tendencia automática',
+      title_en: '3rd Review curve meanings & automatic trends',
+      desc_es: 'Estas 4 tarjetas traducen la pendiente del gráfico para la estrategia activa (recarga vs. estrés hídrico, cobertura protectora y secuestro o pérdida de carbono).',
+      desc_en: 'These 4 cards translate chart slopes for the active strategy (recharge vs. water stress, soil shield, and carbon gain or loss).'
+    },
+    {
       selector: '#playTimelineBtn',
-      title_es: '2° Animá el ciclo o tocá un mes',
-      title_en: '2nd Auto-play cycle or click a month',
-      desc_es: 'Usá "Recorrer ciclo" o hacé clic sobre cualquier mes de la grilla (rojo = suelo desnudo, verde = cobertura viva).',
+      title_es: '4° Configura un ciclo o elige un mes',
+      title_en: '4th Auto-play cycle or click a month',
+      desc_es: 'Utiliza "Recorrer ciclo" o haz clic sobre cualquier mes de la grilla (rojo = suelo desnudo, verde = cobertura viva).',
       desc_en: 'Click "Auto-play cycle" or pick any month tile below (red = bare soil, green = active cover).'
     },
     {
       selector: '#waterTankBanner',
-      title_es: '3° Leé agua útil, ETa y estrés Ks',
-      title_en: '3rd Check water reserve, ETa & Ks stress',
+      title_es: '5° Inspecciona agua útil, ETa y estrés Ks',
+      title_en: '5th Check water reserve, ETa & Ks stress',
       desc_es: 'Muestra la reserva frente al testigo y el balance FAO-56 en 3 sub-pasos (ETa real vs ETc y drenaje).',
       desc_en: 'Displays tank reserve vs baseline plus 3-substep FAO-56 water balance (actual ETa vs ETc & drainage).'
     },
     {
       selector: '#fnKpiGrid',
-      title_es: '4° Tocá cualquier KPI para abrir su popup',
-      title_en: '4th Click any KPI to explain the math',
-      desc_es: 'Cada tarjeta tiene botón (?) con explicación en palabras simples y ecuación exacta. Luego seguí al Paso 4.',
-      desc_en: 'Every metric card opens a plain-language + white-box popup. Then proceed to Step 4.'
+      title_es: '6° Elige cualquier KPI para abrir su popup',
+      title_en: '6th Click any KPI to explain the math',
+      desc_es: 'Cada tarjeta tiene botón (?) con explicaciones y la ecuación utilizada. Luego prosigue al Paso 4.',
+      desc_en: 'Every metric card opens an explanation + formula popup. Then proceed to Step 4.'
     }
   ],
   4: [
     {
       selector: '#btnPresetNina',
-      title_es: '1° Probá estrés climático o prioridades',
+      title_es: '1° Prueba estrés climático o prioridades',
       title_en: '1st Test climate shock or priorities',
-      desc_es: 'Empezá tocando La Niña, El Niño, Crisis o moviendo los sliders para ver cómo reacciona el ranking en vivo.',
-      desc_en: 'Click La Niña, El Niño, Crisis presets or move sliders to see rankings react live.'
+      desc_es: 'Seleccioná un escenario (La Niña, El Niño o Crisis) o ajustá los controles de lluvia, temperatura y prioridades para evaluar cómo responde cada rotación.',
+      desc_en: 'Select a scenario (La Niña, El Niño, or Economic crisis) or adjust the rainfall, temperature, and priority controls to evaluate how each rotation responds.'
     },
     {
       selector: '#livePodiumGrid',
@@ -2181,7 +2880,7 @@ const STEP_TUTORIALS = {
       selector: '#mcdaTable',
       title_es: '3° Auditá cualquier criterio (C1–C15) o nota',
       title_en: '3rd Audit any criterion (C1–C15) or score',
-      desc_es: 'Hacé clic en C1, C7, C9 (marcados FAO-33) o en cualquier chip numérico para entender la fórmula y cómo mejorarlo.',
+      desc_es: 'Haz clic en C1, C7, C9 (marcados FAO-33) o en cualquier chip numérico para entender la fórmula y cómo mejorarlo.',
       desc_en: 'Click C1, C7, C9 (tagged FAO-33) or any score chip to inspect its equation and improvement tips.'
     },
     {
@@ -2213,16 +2912,57 @@ function startStepPointerTutorial(stepNum, force = true) {
 
   CLIENT_STATE.tutorialState = {
     active: true,
+    paused: false,
     step: targetStep,
     idx: 0,
     timer: null
   };
 
   const overlay = document.getElementById('pointerTutorialOverlay');
-  if (overlay) overlay.style.display = 'block';
+  if (overlay) {
+    overlay.style.display = 'block';
+    overlay.classList.remove('is-paused');
+  }
 
+  updatePointerTutorialPauseUi();
   renderPointerTutorialSlide(true);
   schedulePointerTutorialNext();
+}
+
+function updatePointerTutorialPauseUi() {
+  const ts = CLIENT_STATE.tutorialState;
+  const overlay = document.getElementById('pointerTutorialOverlay');
+  const pauseBtn = document.getElementById('ptPauseBtn');
+  if (overlay) overlay.classList.toggle('is-paused', Boolean(ts.paused));
+  if (pauseBtn) {
+    pauseBtn.classList.toggle('is-paused', Boolean(ts.paused));
+    pauseBtn.setAttribute('aria-pressed', ts.paused ? 'true' : 'false');
+    pauseBtn.innerHTML = ts.paused
+      ? `▶ <span>${t('pt_resume')}</span>`
+      : `⏸ <span>${t('pt_pause')}</span>`;
+  }
+  const badge = document.getElementById('ptStepBadge');
+  const slides = STEP_TUTORIALS[ts.step] || [];
+  if (badge && ts.active && slides.length > 0) {
+    const isEs = CLIENT_STATE.lang === 'es';
+    const pausedTxt = ts.paused ? ` · ${t('pt_paused_badge')}` : '';
+    badge.innerHTML = `<span class="trust-dot"></span> ${isEs ? 'Paso' : 'Step'} ${ts.step} · ${ts.idx + 1}/${slides.length}${pausedTxt}`;
+  }
+}
+
+function togglePauseStepPointerTutorial() {
+  const ts = CLIENT_STATE.tutorialState;
+  if (!ts.active) return;
+  ts.paused = !ts.paused;
+  if (ts.paused) {
+    if (ts.timer) {
+      clearTimeout(ts.timer);
+      ts.timer = null;
+    }
+  } else {
+    schedulePointerTutorialNext();
+  }
+  updatePointerTutorialPauseUi();
 }
 
 function schedulePointerTutorialNext() {
@@ -2232,10 +2972,10 @@ function schedulePointerTutorialNext() {
   }
   const ts = CLIENT_STATE.tutorialState;
   const slides = STEP_TUTORIALS[ts.step] || [];
-  if (!ts.active || ts.idx >= slides.length - 1) return;
+  if (!ts.active || ts.paused || ts.idx >= slides.length - 1) return;
 
   ts.timer = setTimeout(() => {
-    if (!CLIENT_STATE.tutorialState.active) return;
+    if (!CLIENT_STATE.tutorialState.active || CLIENT_STATE.tutorialState.paused) return;
     nextStepPointerTutorial();
   }, 4200);
 }
@@ -2248,8 +2988,7 @@ function renderPointerTutorialSlide(allowScroll = true) {
   const slide = slides[ts.idx];
   const isEs = CLIENT_STATE.lang === 'es';
 
-  document.getElementById('ptStepBadge').innerHTML =
-    `<span class="trust-dot"></span> ${isEs ? 'Paso' : 'Step'} ${ts.step} · ${ts.idx + 1}/${slides.length}`;
+  updatePointerTutorialPauseUi();
   document.getElementById('ptTitle').textContent = isEs ? slide.title_es : slide.title_en;
   document.getElementById('ptDesc').textContent = isEs ? slide.desc_es : slide.desc_en;
 
@@ -2269,7 +3008,9 @@ function renderPointerTutorialSlide(allowScroll = true) {
     const r = targetEl.getBoundingClientRect();
     if (r.top < 80 || r.bottom > window.innerHeight - 60) {
       targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      setTimeout(() => positionPointerTutorial(), 320);
+      [120, 320, 580].forEach((ms) => {
+        setTimeout(() => positionPointerTutorial(), ms);
+      });
     }
   }
   positionPointerTutorial();
@@ -2372,8 +3113,12 @@ function stopStepPointerTutorial(markSeen = true) {
     CLIENT_STATE.seenTutorials[ts.step] = true;
   }
   ts.active = false;
+  ts.paused = false;
   const overlay = document.getElementById('pointerTutorialOverlay');
-  if (overlay) overlay.style.display = 'none';
+  if (overlay) {
+    overlay.classList.remove('is-paused');
+    overlay.style.display = 'none';
+  }
 }
 
 window.addEventListener('resize', () => {
@@ -2383,8 +3128,15 @@ window.addEventListener('scroll', () => {
   if (CLIENT_STATE.tutorialState.active) positionPointerTutorial();
 }, { passive: true });
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && CLIENT_STATE.tutorialState.active) {
+  if (!CLIENT_STATE.tutorialState.active) return;
+  if (e.key === 'Escape') {
     skipStepPointerTutorial();
+  } else if (e.code === 'Space') {
+    const tag = (e.target && e.target.tagName) || '';
+    if (!['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(tag)) {
+      e.preventDefault();
+      togglePauseStepPointerTutorial();
+    }
   }
 });
 
@@ -2393,7 +3145,11 @@ window.addEventListener('DOMContentLoaded', () => {
   setupWheelProtection();
   populateInitialStatesSelect('prevCropInput');
   populateInitialStatesSelect('sePrevCropInput');
-  renderInitialStateSummaryCard();
   initMap();
   applyStaticTranslations();
+  renderSatObservationBanner();
+  renderInitialStateSummaryCard();
+  applyZoneSatelliteParamsToInputs(CLIENT_STATE.envContext);
+  updateEnvCards(CLIENT_STATE.envContext);
+  updateChartGuideToggleButton();
 });

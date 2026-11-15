@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Field Shift v4.0 — Rotación Inteligente de Cultivos</title>
+  <title>Field Shift v5.0 — Rotación Inteligente de Cultivos</title>
 
   <!-- Tipografía Editorial (Cormorant Garamond + Inter según DESIGN.md) -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -21,12 +21,12 @@
   <!-- FRANJA SUPERIOR VIVID LIME -->
   <div class="lime-marquee" role="region" aria-label="Información científica">
     <div class="marquee-track" id="marqueeTrack">
-      <span class="marquee-item" data-i18n="mq_1">✓ NASA Space Apps 2026 — Field Shift v4.0 (FAO-56 · FAO-33 · MCDA)</span>
-      <span class="marquee-item" data-i18n="mq_2">✓ NASA POWER Serie Diaria + SoilGrids Q0.05–Q0.95 + INTA SIGA + Sentinel-2 NDVI</span>
+      <span class="marquee-item" data-i18n="mq_1">✓ NASA Space Apps 2026 — Field Shift v5.0 (FAO-56 · FAO-33 · MCDA)</span>
+      <span class="marquee-item" data-i18n="mq_2">✓ Planetary Computer Sentinel-2 L2A + NASA POWER + SoilGrids 5 Profundidades</span>
       <span class="marquee-item" data-i18n="mq_3">✓ Filtro Aptitud · Auditoría SAW-15 · TOPSIS-15 · Monte Carlo (N=10.000)</span>
       <span class="marquee-item" data-i18n="mq_4">✓ Licencia Abierta Apache 2.0 — Ciclos 1 a 6 Años &amp; Mini-Tutorial Interactivo</span>
-      <span class="marquee-item" data-i18n="mq_1">✓ NASA Space Apps 2026 — Field Shift v4.0 (FAO-56 · FAO-33 · MCDA)</span>
-      <span class="marquee-item" data-i18n="mq_2">✓ NASA POWER Serie Diaria + SoilGrids Q0.05–Q0.95 + INTA SIGA + Sentinel-2 NDVI</span>
+      <span class="marquee-item" data-i18n="mq_1">✓ NASA Space Apps 2026 — Field Shift v5.0 (FAO-56 · FAO-33 · MCDA)</span>
+      <span class="marquee-item" data-i18n="mq_2">✓ Planetary Computer Sentinel-2 L2A + NASA POWER + SoilGrids 5 Profundidades</span>
       <span class="marquee-item" data-i18n="mq_3">✓ Filtro Aptitud · Auditoría SAW-15 · TOPSIS-15 · Monte Carlo (N=10.000)</span>
       <span class="marquee-item" data-i18n="mq_4">✓ Licencia Abierta Apache 2.0 — Ciclos 1 a 6 Años &amp; Mini-Tutorial Interactivo</span>
     </div>
@@ -114,9 +114,9 @@
             <span class="section-kicker" style="margin-bottom:0;" data-i18n="s1_kicker">Paso 1 de 4 · Delimitación Espacial, NDVI Interno y Estado de Partida</span>
             <button type="button" class="btn-eq" onclick="startStepPointerTutorial(1, true)">🎯 <span data-i18n="btn_mini_tut">Mini-tutorial del paso</span></button>
           </div>
-          <h2 class="section-title" data-i18n="s1_title">Marcá los puntos de tu lote para inspeccionar el NDVI por cuadro e iniciar el ciclo</h2>
+          <h2 class="section-title" data-i18n="s1_title">Marca los puntos de tu lote para inspeccionar el NDVI por cuadro e iniciar el ciclo</h2>
           <p class="section-intro" data-i18n="s1_intro">
-            Hacé clic sobre la imagen satelital para marcar tu parcela (mínimo 3 puntos). Cada cuadro interno muestra su color y valor exacto de NDVI Sentinel-2 acorde al estado inicial del campo. Hacé clic en cualquier cuadro del mapa para ver su diagnóstico.
+            Haz clic sobre la imagen satelital para marcar tu parcela (mínimo 3 puntos). Cada cuadro interno muestra su color y valor exacto de NDVI Sentinel-2 acorde al estado inicial del campo. Hacé clic en cualquier cuadro del mapa para ver su diagnóstico.
           </p>
         </div>
 
@@ -133,14 +133,18 @@
               <button class="btn-pill btn-outline btn-sm" onclick="undoLastPoint()" data-i18n="btn_undo">↩ Quitar último punto</button>
               <button class="btn-pill btn-outline btn-sm" onclick="clearPolygon()" data-i18n="btn_clear">Limpiar mapa</button>
               <button class="btn-pill btn-outline btn-sm" onclick="loadGuaminiPreset(true)" data-i18n="btn_preset">Cargar Guaminí (100.000 m²)</button>
+              <button class="btn-eq" id="btnRefreshSatellite" onclick="refreshStep1Satellite(true)" title="Consultar Sentinel-2 L2A real y humedad actual sobre este polígono">🛰️ <span data-i18n="btn_sat_detect">Detectar satélite en lote</span></button>
             </div>
+
+            <!-- LECTURA SATELITAL REAL OBSERVADA SOBRE EL POLÍGONO -->
+            <div id="satObservationBanner" class="sat-obs-banner"></div>
 
             <!-- LEYENDA INTERACTIVA DE NDVI + DISTRIBUCIÓN DE CUADROS INTERNOS -->
             <div class="ndvi-legend">
               <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                 <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
-                  <strong style="font-size:13px;" data-i18n="ndvi_title">Grilla NDVI Realista por Cuadro (Sentinel-2 — 10 m)</strong>
-                  <span id="meanNdviBadge" class="delta-pill delta-up">NDVI medio lote: 0,68</span>
+                  <strong id="ndviGridTitle" style="font-size:13px;" data-i18n="ndvi_title">Grilla NDVI Realista por Cuadro (Sentinel-2 — 10 m)</strong>
+                  <span id="meanNdviBadge" class="delta-pill delta-up">NDVI medio lote: 0,33</span>
                 </div>
                 <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
                   <button class="btn-eq" id="toggleNdviNumbersBtn" onclick="toggleNdviNumbers()" data-i18n="btn_ndvi_nums_hide">🔢 Ocultar números</button>
@@ -173,7 +177,7 @@
 
             <div class="metric-pill-box">
               <div class="metric-pill-label" data-i18n="lbl_loc">Centroide y Jurisdicción (API Georef)</div>
-              <div style="font-size:15px; font-weight:600; margin-top:4px;" id="centroidDisplay">-36,805506° S, -62,026496° O</div>
+              <div style="font-size:15px; font-weight:600; margin-top:4px;" id="centroidDisplay">36.805506° S, 62.026496° O</div>
               <div class="muted-sub" id="jurisdictionDisplay"><%= initialData.envContext.georef.etiqueta %></div>
             </div>
 
@@ -263,36 +267,41 @@
 
           <div class="card card-peach">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-              <span class="trust-badge trust-green"><span class="trust-dot"></span> SMAP L4 + CONAE</span>
+              <span class="trust-badge trust-green" id="smapSourceBadge"><span class="trust-dot"></span> NASA GWETROOT + Open-Meteo</span>
               <button class="btn-eq" onclick="openInfoPopup('smap')">? · ƒx Radar</button>
             </div>
             <div class="card-kicker-lbl" data-i18n="card_smap_lbl">Humedad Radicular Inicial</div>
-            <div class="card-big-val" id="smapCardVal">0,21 m³/m³</div>
-            <p class="card-sub-txt" id="smapCardSub" data-i18n="card_smap_sub">Carga hídrica inicial del 62% en 0–100 cm.</p>
+            <div class="card-big-val" id="smapCardVal"><%= String(initialData.envContext.suelo.humedad_volumetrica_m3 ?? 0.21).replace('.', ',') %> m³/m³</div>
+            <p class="card-sub-txt" id="smapCardSub" data-i18n="card_smap_sub">Carga hídrica inicial del <%= initialData.params.initMoisturePct %>% en 0–100 cm.</p>
           </div>
 
           <div class="card card-ash">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-              <span class="trust-badge trust-green"><span class="trust-dot"></span> MAGyP / INDEC</span>
+              <span class="trust-badge trust-green" id="magypSourceBadge"><span class="trust-dot"></span> MAGyP / INDEC</span>
               <button class="btn-eq" onclick="openInfoPopup('magyp')">? · ƒx Riesgo</button>
             </div>
             <div class="card-kicker-lbl" data-i18n="card_magyp_lbl">Estabilidad Rindes 10 años</div>
-            <div class="card-big-val">CV 17%–34%</div>
-            <p class="card-sub-txt" data-i18n="card_magyp_sub">Sorgo: 5.400 kg/ha (CV 17%). Maíz: 6.900 kg/ha.</p>
+            <div class="card-big-val" id="magypCardVal">CV 17%–34%</div>
+            <p class="card-sub-txt" id="magypCardSub" data-i18n="card_magyp_sub">Sorgo: 5.400 kg/ha (CV 17%). Maíz: 6.900 kg/ha.</p>
           </div>
         </div>
 
         <!-- PARÁMETROS BASE DEL LOTE -->
         <div class="card" style="margin-bottom: 24px;">
-          <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-bottom:20px;">
+          <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px;">
             <div>
               <h3 class="card-title-serif" data-i18n="s2_form_title">Parámetros Base del Lote y Manejo del Agricultor</h3>
-              <p class="muted-sub" data-i18n="s2_form_sub">Valores globales por defecto (cada estrategia puede heredarlos o definir los suyos abajo).</p>
+              <p class="muted-sub" data-i18n="s2_form_sub">Determinados en vivo por satélite según el polígono del Paso 1. Si contás con análisis INTA, laboratorio o medición propia, podés editarlos abajo.</p>
             </div>
-            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
               <span id="calibrationStatusBadge" class="trust-badge trust-yellow"><span class="trust-dot"></span> <span data-i18n="badge_sat_mode">Modo Satélite (IC 90%)</span></span>
-              <button class="btn-pill btn-outline btn-sm" onclick="resetLocalOverrides()" data-i18n="btn_reset_sat">Restaurar satélite</button>
+              <button type="button" id="btnToggleManualOverride" class="btn-pill btn-outline btn-sm" onclick="toggleManualOverrideMode()">✏️ <span data-i18n="btn_edit_inta">Modificar con datos INTA / propios</span></button>
+              <button type="button" id="btnResetSatelliteParams" class="btn-pill btn-outline btn-sm" onclick="resetLocalOverrides()">🛰️ <span data-i18n="btn_reset_sat">Usar datos satelitales del Paso 1</span></button>
             </div>
+          </div>
+
+          <div id="step2ZoneOriginBanner" class="step2-zone-origin-banner">
+            🛰️ <strong>Zona cargada desde Paso 1:</strong> <%= initialData.envContext.georef.etiqueta %> · AW <%= initialData.params.awMmM %> mm/m · SOC <%= initialData.params.socGKg %> g/kg · Humedad <%= initialData.params.initMoisturePct %>%
           </div>
 
           <div class="grid-3">
@@ -301,7 +310,8 @@
                 <span data-i18n="inp_aw">Agua Disponible Perfil (mm/m)</span>
                 <button type="button" class="btn-help-inline" onclick="openInfoPopup('aw')">?</button>
               </label>
-              <input type="number" id="inputAW" class="form-control no-wheel" value="130" min="50" max="240" onchange="markLocalOverride()" />
+              <input type="number" id="inputAW" class="form-control no-wheel" value="<%= initialData.params.awMmM %>" min="40" max="260" onchange="markLocalOverride()" />
+              <span id="satRefAW" class="sat-ref-inline">🛰️ Satélite Paso 1: <strong><%= initialData.params.awMmM %> mm/m</strong></span>
               <span class="field-impact-hint" data-i18n="hint_aw">Modifica: Capacidad del tanque hídrico y C2.</span>
             </div>
 
@@ -310,7 +320,8 @@
                 <span data-i18n="inp_moist">Humedad Inicial del Suelo (%)</span>
                 <button type="button" class="btn-help-inline" onclick="openInfoPopup('smap')">?</button>
               </label>
-              <input type="number" id="inputInitMoisture" class="form-control no-wheel" value="62" min="15" max="100" onchange="markLocalOverride()" />
+              <input type="number" id="inputInitMoisture" class="form-control no-wheel" value="<%= initialData.params.initMoisturePct %>" min="0" max="100" onchange="markLocalOverride()" />
+              <span id="satRefMoist" class="sat-ref-inline">🛰️ Satélite Paso 1: <strong><%= initialData.params.initMoisturePct %>%</strong></span>
               <span class="field-impact-hint" data-i18n="hint_moist">Modifica: Reserva de agua en el Mes 1.</span>
             </div>
 
@@ -319,7 +330,8 @@
                 <span data-i18n="inp_soc">Carbono Orgánico Lab (g/kg)</span>
                 <button type="button" class="btn-help-inline" onclick="openInfoPopup('soc_gei')">?</button>
               </label>
-              <input type="number" step="0.1" id="inputSOC" class="form-control no-wheel" value="18.4" min="5" max="50" onchange="markLocalOverride()" />
+              <input type="number" step="0.1" id="inputSOC" class="form-control no-wheel" value="<%= initialData.params.socGKg %>" min="3" max="80" onchange="markLocalOverride()" />
+              <span id="satRefSOC" class="sat-ref-inline">🛰️ Satélite Paso 1: <strong><%= initialData.params.socGKg %> g/kg</strong></span>
               <span class="field-impact-hint" data-i18n="hint_soc">Modifica: Línea base SOC y reduce error en C3.</span>
             </div>
 
@@ -329,10 +341,11 @@
                 <button type="button" class="btn-help-inline" onclick="openInfoPopup('aw')">?</button>
               </label>
               <select id="inputTosca" class="form-control" onchange="markLocalOverride()">
-                <option value="100" selected data-i18n="opt_tosca_100">Sin limitante (&gt; 100 cm perfil útil)</option>
-                <option value="75" data-i18n="opt_tosca_75">Tosca moderada a 75 cm (-25% agua útil)</option>
-                <option value="50" data-i18n="opt_tosca_50">Tosca somera a 50 cm (-50% agua útil)</option>
+                <option value="100" <%= initialData.params.toscaCm === 100 ? 'selected' : '' %> data-i18n="opt_tosca_100">Sin limitante (&gt; 100 cm perfil útil)</option>
+                <option value="75" <%= initialData.params.toscaCm === 75 ? 'selected' : '' %> data-i18n="opt_tosca_75">Tosca moderada a 75 cm (-25% agua útil)</option>
+                <option value="50" <%= initialData.params.toscaCm === 50 ? 'selected' : '' %> data-i18n="opt_tosca_50">Tosca somera a 50 cm (-50% agua útil)</option>
               </select>
+              <span id="satRefTosca" class="sat-ref-inline">🛰️ Satélite Paso 1: <strong><%= initialData.params.toscaCm %> cm</strong></span>
               <span class="field-impact-hint" data-i18n="hint_tosca">Modifica: Lámina máxima almacenada.</span>
             </div>
 
@@ -436,6 +449,25 @@
             <canvas id="timelineChartCanvas" height="105"></canvas>
           </div>
 
+          <!-- GUÍA INTERACTIVA DE CURVAS Y DIAGNÓSTICO DE TENDENCIAS (PASO 3) -->
+          <div id="step3ChartGuideBox" class="step3-chart-guide">
+            <div class="step3-guide-head">
+              <div>
+                <h3 class="step3-guide-title" data-i18n="s3_chart_guide_title">📊 Cómo leer este gráfico y qué significan sus tendencias</h3>
+              </div>
+              <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                <button type="button" class="btn-eq" onclick="startChartMiniTutorial()">🎯 <span data-i18n="s3_btn_chart_tour">Mini-tutorial de los gráficos</span></button>
+                <button type="button" class="btn-eq" id="btnToggleChartGuide" onclick="toggleChartGuideDetails()">📖 <span data-i18n="s3_btn_toggle_guide">Ocultar guía</span></button>
+              </div>
+            </div>
+            <div id="step3ChartGuideBody">
+              <p class="step3-axes-hint" data-i18n="s3_chart_axes_hint">
+                El Eje Izquierdo mide Agua Útil (mm), Vigor NDVI (×100) y Nitrógeno (kg/ha). El Eje Derecho mide el Carbono Acumulado en tu lote (t C). Hacé clic en cualquier punto de las curvas para inspeccionar ese mes.
+              </p>
+              <div id="timelineTrendsGrid" class="trends-explain-grid"></div>
+            </div>
+          </div>
+
           <div class="timeline-playback-bar">
             <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
               <button class="btn-pill btn-outline btn-sm" onclick="stepTimelineMonth(-1)" data-i18n="btn_prev_m">◀ Mes anterior</button>
@@ -501,7 +533,7 @@
         <div class="card card-sage" style="margin-bottom: 24px;">
           <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-bottom:16px;">
             <strong style="font-size:14px;" data-i18n="scen_prompt">Probar escenario climático o económico especial:</strong>
-            <span id="scenarioActiveLabel" class="scenario-pill-active">Clima Normal (Base)</span>
+            <span id="scenarioActiveLabel" class="scenario-pill-active" data-i18n="sc_normal">Clima Normal (Base)</span>
           </div>
 
           <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:20px;">
@@ -604,19 +636,19 @@
       <div>
         <strong style="display:block; margin-bottom:12px; color:var(--vivid-lime); font-size:13px; text-transform:uppercase;" data-i18n="ft_apis">APIs Integradas</strong>
         <ul style="list-style:none; font-size:13px; opacity:0.88; line-height:2;">
-          <li>NASA POWER API (Climatología AG)</li>
-          <li>ISRIC SoilGrids v2.0 (Cuantiles Q0.05–Q0.95)</li>
-          <li>ESA Sentinel-2 NDVI (10 m) &amp; SMAP L4</li>
-          <li>INTA SIGA · GeoINTA · CONAE · MAGyP</li>
+          <li data-i18n="ft_api_1">NASA POWER API (Clima + GWETROOT)</li>
+          <li data-i18n="ft_api_2">ISRIC SoilGrids v2.0 (5 Profundidades · IC 90%)</li>
+          <li data-i18n="ft_api_3">Planetary Computer Sentinel-2 L2A (10 m) &amp; Open-Meteo</li>
+          <li data-i18n="ft_api_4">Georef AR + OSM Nominatim · INTA · MAGyP</li>
         </ul>
       </div>
       <div>
-        <strong style="display:block; margin-bottom:12px; color:var(--vivid-lime); font-size:13px; text-transform:uppercase;" data-i18n="ft_arch">Arquitectura MVC v4.0</strong>
+        <strong style="display:block; margin-bottom:12px; color:var(--vivid-lime); font-size:13px; text-transform:uppercase;" data-i18n="ft_arch">Arquitectura MVC v5.0</strong>
         <ul style="list-style:none; font-size:13px; opacity:0.88; line-height:2;">
-          <li>Backend: Node.js + Express + EJS</li>
-          <li>Física: Penman-Monteith FAO-56 + FAO-33</li>
-          <li>Geodesia: Leaflet.js + Turf.js + Chart.js</li>
-          <li>Motor: SAW-15 · TOPSIS-15 · Extremos POWER</li>
+          <li data-i18n="ft_arch_1">Backend: Node.js + Express + EJS</li>
+          <li data-i18n="ft_arch_2">Física: Penman-Monteith FAO-56 + FAO-33</li>
+          <li data-i18n="ft_arch_3">Geodesia: Leaflet.js + Turf.js + Chart.js</li>
+          <li data-i18n="ft_arch_4">Motor: SAW-15 · TOPSIS-15 · Extremos POWER</li>
         </ul>
       </div>
     </div>
@@ -642,8 +674,9 @@
       <p id="ptDesc" class="pt-desc"></p>
       <div class="pt-footer">
         <div id="ptDots" class="pt-dots"></div>
-        <div style="display:flex; gap:6px; align-items:center;">
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
           <button type="button" class="btn-eq" id="ptPrevBtn" onclick="prevStepPointerTutorial()">◀</button>
+          <button type="button" class="btn-eq pt-pause-btn" id="ptPauseBtn" onclick="togglePauseStepPointerTutorial()" title="Pausar / Reanudar (Barra espaciadora)">⏸ <span data-i18n="pt_pause">Pausar</span></button>
           <button type="button" class="btn-pill btn-forest btn-sm" id="ptNextBtn" onclick="nextStepPointerTutorial()" data-i18n="pt_next">Siguiente ▶</button>
         </div>
       </div>
@@ -654,7 +687,7 @@
   <div class="modal-backdrop" id="equationModal" role="dialog" aria-modal="true" onclick="if(event.target===this) closeEquationModal()">
     <div class="modal-card">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:8px;">
-        <span class="trust-badge trust-green"><span class="trust-dot"></span> <span id="modalBadgeText" data-i18n="mod_badge">Explicación y Auditoría Matemática · Caja Blanca</span></span>
+        <span class="trust-badge trust-green"><span class="trust-dot"></span> <span id="modalBadgeText" data-i18n="mod_badge">Fundamentos Técnicos y Fórmulas de Evaluación</span></span>
         <button class="btn-pill btn-outline btn-sm" onclick="closeEquationModal()" data-i18n="btn_close">Cerrar ✕</button>
       </div>
       <h3 id="modalEqTitle" class="modal-title-serif"></h3>

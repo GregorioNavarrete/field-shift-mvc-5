@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Field Shift v4.0 — Explorador Técnico y de Datos Abiertos (Apache 2.0)</title>
-  <meta name="description" content="Single-page interactive technical explorer for Field Shift v4.0: NASA POWER, ISRIC SoilGrids v2.0, Penman-Monteith FAO-56, FAO-33 yield response, and SAW-15/TOPSIS-15 crop rotation decision support." />
+  <title>Field Shift v5.0 — Explorador Técnico y de Datos Abiertos (Apache 2.0)</title>
+  <meta name="description" content="Single-page interactive technical explorer for Field Shift v5.0: Planetary Computer Sentinel-2 L2A, NASA POWER GWETROOT, ISRIC SoilGrids v2.0 (5 depths), Penman-Monteith FAO-56, FAO-33 yield response, and SAW-15/TOPSIS-15." />
   <meta name="license" content="Apache-2.0" />
   <meta name="si-disclosure" content="Language-model assistance (Super Intelligence) was used to accelerate code structuring and documentation drafting under student supervision; all scientific choices, parameters, and validation remain human-verified." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -15,7 +15,7 @@
 <body>
 
   <div class="top-strip" id="topStrip" data-i18n="top_strip">
-    Field Shift v4.0 · Licencia Abierta Apache 2.0 · NASA Space Apps 2026 (Project UNSE) · Explorador interactivo estático para GitHub Pages
+    Field Shift v5.0 · Licencia Abierta Apache 2.0 · NASA Space Apps 2026 (Project UNSE) · Explorador interactivo estático para GitHub Pages
   </div>
 
   <header class="site-header">
@@ -26,7 +26,7 @@
           <path d="M12 3V20" stroke="#07503f" stroke-width="1.8"/>
         </svg>
         <span>field shift</span>
-        <span class="brand-sub">v4.0 Open Explorer</span>
+        <span class="brand-sub">v5.0 Open Explorer</span>
       </a>
 
       <nav class="nav-links" aria-label="Secciones">
@@ -48,9 +48,9 @@
     <div class="hero-grid">
       <div>
         <span class="hero-eyebrow" data-i18n="hero_eyebrow">Observación Terrestre + Agronomía · Caja Blanca Apache 2.0</span>
-        <h1 data-i18n="hero_title">Cómo funciona Field Shift v4.0 y qué datos satelitales reales procesa</h1>
+        <h1 data-i18n="hero_title">Cómo funciona Field Shift v5.0 y qué datos satelitales reales procesa</h1>
         <p class="hero-lead" data-i18n="hero_lead">
-          Esta página estática explica la arquitectura de Field Shift v4.0 y permite consultar en tiempo real las mismas APIs abiertas que usa el servidor Node.js/Express (NASA POWER, ISRIC SoilGrids v2.0 y Georef AR), calcular ET₀ Penman-Monteith FAO-56 en tu navegador y probar el ranking multicriterio SAW-15 / TOPSIS-15.
+          Esta página estática explica la arquitectura de Field Shift v5.0 y permite consultar en tiempo real las APIs abiertas que usa el servidor Node.js/Express (NASA POWER clima + GWETROOT, ISRIC SoilGrids 5 profundidades, Georef AR + Nominatim global y Sentinel-2 L2A), calcular ET₀ Penman-Monteith FAO-56 y probar SAW-15 / TOPSIS-15.
         </p>
         <div class="hero-actions">
           <a href="#data-live" class="btn-pill btn-lime" data-i18n="hero_cta_api">Probar APIs en vivo ↓</a>
@@ -110,10 +110,19 @@
             <strong style="font-size:13.5px;" data-i18n="ndvi_demo_title">Vista previa de Grilla NDVI (7×6 celdas · Paso 1)</strong>
             <select id="ndviStateSelect" class="form-control" style="padding:5px 10px; font-size:12px;" onchange="renderNdviPreview()">
               <option value="soja_1ra">Soja de 1ra (NDVI 0.68 · cabeceras estresadas)</option>
-              <option value="barbecho_desnudo">Barbecho desnudo (NDVI 0.13 · alerta erosión)</option>
-              <option value="pastura_alfalfa">Pastura Alfalfa + Festuca (NDVI 0.82)</option>
+              <option value="soja_2da">Soja de 2da (NDVI 0.62 · doble cultivo)</option>
+              <option value="maiz_temprano">Maíz temprano (NDVI 0.72 · pleno verano)</option>
+              <option value="maiz_tardio">Maíz tardío (NDVI 0.66 · diciembre)</option>
+              <option value="sorgo_granifero">Sorgo granífero (NDVI 0.64 · rastrojo fibroso)</option>
+              <option value="girasol">Girasol (NDVI 0.60 · baja cobertura post-cosecha)</option>
               <option value="mani">Maní arrancado (NDVI 0.24 · suelo removido)</option>
+              <option value="rastrojo_trigo">Rastrojo de trigo (NDVI 0.28 · 85% cobertura)</option>
+              <option value="pastura_alfalfa">Pastura Alfalfa + Festuca (NDVI 0.82)</option>
               <option value="campo_natural">Campo natural (NDVI 0.60 · gradiente loma-bajo)</option>
+              <option value="cobertura_vicia_centeno">Cobertura Vicia + Centeno (NDVI 0.74)</option>
+              <option value="barbecho_quimico">Barbecho químico largo (NDVI 0.19)</option>
+              <option value="barbecho_desnudo">Barbecho desnudo (NDVI 0.13 · alerta erosión)</option>
+              <option value="degradado_compactado">Suelo degradado / compactado (NDVI 0.14)</option>
             </select>
           </div>
           <p class="muted" style="margin-top:6px;" id="ndviStateNote"></p>
@@ -216,7 +225,7 @@
               <th data-i18n="th_src">Fuente / Dataset</th>
               <th data-i18n="th_vars">Variables Extraídas</th>
               <th data-i18n="th_type">Naturaleza Epistemológica</th>
-              <th data-i18n="th_use">Rol en el Motor v4.0</th>
+              <th data-i18n="th_use">Rol en el Motor v5.0</th>
             </tr>
           </thead>
           <tbody id="epistTableBody"></tbody>
@@ -377,8 +386,8 @@
       <div class="grid-2" style="margin-top:18px;">
         <div class="card">
           <h3 class="card-title-serif" data-i18n="dep_local_title">Ejecución local del sistema completo (Node.js)</h3>
-          <pre class="json-box" style="max-height:170px;">git clone https://github.com/GregorioNavarrete/field-shift-mvc-4.git
-cd field-shift-mvc-4
+          <pre class="json-box" style="max-height:170px;">git clone https://github.com/GregorioNavarrete/field-shift-mvc-5.git
+cd field-shift-mvc-5
 npm install
 npm start
 # Aplicación activa en http://localhost:3000</pre>
@@ -400,7 +409,7 @@ npm start
   <footer class="site-footer">
     <div class="footer-inner">
       <div>
-        <h4>Field Shift v4.0 · Project UNSE</h4>
+        <h4>Field Shift v5.0 · Project UNSE</h4>
         <p data-i18n="ft_desc">
           Herramienta abierta de apoyo a la decisión en rotaciones agrícolas (Licencia Apache 2.0). Los resultados son inferencias modeladas para comparar alternativas y explorar riesgos climáticos; no reemplazan la prescripción profesional en campo.
         </p>

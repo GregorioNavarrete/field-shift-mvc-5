@@ -345,7 +345,17 @@ body {
 .band { width: 100%; padding: var(--section-gap) 24px; }
 .band-bone { background-color: var(--bone); }
 .container { max-width: var(--container-max); margin: 0 auto; }
-.section-header { margin-bottom: 24px; }
+.section-header {
+  margin-bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.75rem;
+  max-width: 820px;
+  margin-left: auto;
+  margin-right: auto;
+}
 .section-kicker {
   font-size: 12px;
   font-weight: 600;
@@ -918,9 +928,72 @@ th { background-color: var(--table-head-bg); color: var(--table-head-fg); font-w
   gap: 8px;
   margin-bottom: 8px;
 }
-.pt-skip-btn {
+.pt-skip-btn,
+.pt-pause-btn {
   font-size: 11px;
-  padding: 3px 9px;
+  padding: 4px 9px;
+}
+.pt-pause-btn.is-paused {
+  background-color: #e8fe85;
+  color: #07503f;
+  border-color: #07503f;
+  font-weight: 700;
+}
+.pointer-tutorial-overlay.is-paused .pointer-virtual-cursor,
+.pointer-tutorial-overlay.is-paused .pointer-click-pulse,
+.pointer-tutorial-overlay.is-paused .pointer-target-ring {
+  animation-play-state: paused !important;
+}
+
+.sat-obs-banner {
+  margin-top: 10px;
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--alabaster);
+  border: 1px solid var(--moss);
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--charcoal);
+}
+.sat-obs-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.sat-obs-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.sat-metric-chip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--bone);
+  border: 1px solid var(--moss);
+  font-size: 11.5px;
+}
+.sat-history-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--moss);
+  font-size: 11px;
+  color: var(--graphite);
+}
+.sat-history-chip {
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: var(--sage-wash);
+  color: var(--charcoal);
+  font-weight: 600;
 }
 .pt-title {
   font-family: var(--font-serif);
@@ -960,6 +1033,152 @@ th { background-color: var(--table-head-bg); color: var(--table-head-fg); font-w
   width: 18px;
   border-radius: 100px;
   background: var(--forest-ink);
+}
+
+/* ==========================================================================
+   PASO 2: TRAZABILIDAD SATELITAL DESDE PASO 1 + REFERENCIAS INLINE
+   ========================================================================== */
+.step2-zone-origin-banner {
+  margin-bottom: 18px;
+  padding: 11px 14px;
+  border-radius: 14px;
+  background: var(--sage-card);
+  border: 1px solid var(--moss);
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--charcoal);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+.sat-ref-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--bone);
+  border: 1px solid var(--moss);
+  font-size: 11px;
+  color: var(--graphite);
+  width: fit-content;
+}
+.sat-ref-inline strong {
+  color: var(--forest-ink);
+}
+
+/* ==========================================================================
+   PASO 3: GUÍA DE GRÁFICOS Y DIAGNÓSTICO AUTOMÁTICO DE TENDENCIAS
+   ========================================================================== */
+.step3-chart-guide {
+  margin: 14px 0 18px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: var(--bone);
+  border: 1px solid var(--moss);
+}
+.step3-guide-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.step3-guide-title {
+  font-family: var(--font-serif);
+  font-size: 21px;
+  font-weight: 600;
+  color: var(--forest-ink);
+  margin: 0;
+  line-height: 1.2;
+}
+.step3-axes-hint {
+  margin: 10px 0 12px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--pure-white);
+  border: 1px solid var(--moss);
+  font-size: 12.5px;
+  color: var(--graphite);
+  line-height: 1.45;
+}
+.trends-explain-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.trend-explain-card {
+  background: var(--pure-white);
+  border: 1px solid var(--moss);
+  border-radius: 14px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.trend-explain-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.trend-explain-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--charcoal);
+}
+.trend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.trend-axis-tag {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--pewter);
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--ash-gray);
+}
+.trend-meaning-txt {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--graphite);
+  margin: 0;
+}
+.trend-slope-pill {
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 7px 10px;
+  border-radius: 10px;
+  margin-top: 2px;
+  font-weight: 500;
+}
+.trend-slope-pill.is-pos {
+  background: var(--sc-high-bg);
+  color: var(--sc-high-fg);
+}
+.trend-slope-pill.is-flat {
+  background: var(--sc-mid-bg);
+  color: var(--sc-mid-fg);
+}
+.trend-slope-pill.is-neg {
+  background: var(--sc-low-bg);
+  color: var(--sc-low-fg);
+}
+
+@media (max-width: 780px) {
+  .trends-explain-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 720px) {

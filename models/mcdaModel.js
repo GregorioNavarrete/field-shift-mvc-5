@@ -248,7 +248,16 @@ const MONTH_NAMES_FULL_ES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Juni
 /**
  * Genera el conjunto por defecto de estrategias adaptadas a la duración de ciclo elegida (1 a 6 años).
  */
-function getDefaultStrategies(cycleYears = 2, prevCrop = 'soja_1ra') {
+function finiteNum(val, fallback) {
+  if (val === undefined || val === null || val === '') return fallback;
+  const n = Number(val);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * Devuelve las 6 estrategias por defecto escaladas a la cantidad de años del ciclo (1..6).
+ */
+function getDefaultStrategies(cycleYears = 2, prevCrop = 'satelite_actual') {
   const cy = Math.min(6, Math.max(1, Math.round(Number(cycleYears) || 2)));
 
   const buildPattern = (pairs) => {
@@ -367,18 +376,40 @@ function resolveStrategyConfig(rawSt, globalParams, envContext, seasonCatalog, i
   const ic = rawSt.initialConditions || {};
   const useGlobal = ic.useGlobal !== false;
 
-  const cycleYears = Math.min(6, Math.max(1, Math.round(Number(rawSt.cycleYears) || Number(globalParams.cycleYears) || 2)));
-  const prevCropId = (useGlobal ? globalParams.prevCrop : ic.prevCrop) || globalParams.prevCrop || 'soja_1ra';
-  const prevState = initialStates.find((s) => s.id === prevCropId) || initialStates[0];
+  const cycleYears = Math.min(6, Math.max(1, Math.round(finiteNum(rawSt.cycleYears, finiteNum(globalParams.cycleYears, 2)))));
+  const prevCropId = (useGlobal ? globalParams.prevCrop : ic.prevCrop) || globalParams.prevCrop || 'satelite_actual';
+  let prevState = initialStates.find((s) => s.id === prevCropId) || initialStates[0];
 
-  const awMmM = Number(useGlobal ? globalParams.awMmM : (ic.awMmM ?? globalParams.awMmM)) || envContext.suelo.aw_mm_m.media || 130;
-  const toscaCm = Number(useGlobal ? globalParams.toscaCm : (ic.toscaCm ?? globalParams.toscaCm)) || 100;
-  const initMoisturePct = Number(
+  const liveSat = globalParams.satelliteInit || (envContext?.satellite?.modo === 'live_sentinel2' && envContext.satellite.summary
+    ? { ...envContext.satellite.summary, ndvi: envContext.satellite.meanNdvi, ndmi: envContext.satellite.meanNdmi, date: envContext.satellite.date }
+    : null);
+  if (prevCropId === 'satelite_actual' && liveSat && Number.isFinite(Number(liveSat.ndvi))) {
+    const obsNdvi = Math.min(0.92, Math.max(0.08, Number(liveSat.ndvi)));
+    prevState = {
+      ...prevState,
+      baseNdvi: obsNdvi,
+      initMoisturePct: finiteNum(envContext?.suelo?.humedad_smap_inicial_pct, prevState.initMoisturePct),
+      residueCoverPct: finiteNum(liveSat.residueCoverPct, obsNdvi >= 0.45 ? 78 : (obsNdvi >= 0.25 ? 55 : 22)),
+      initN_kgHa: finiteNum(liveSat.initN_kgHa, obsNdvi >= 0.45 ? 45 : 32),
+      cnRatio: finiteNum(liveSat.cnRatio, 30),
+      pestCarryover: finiteNum(liveSat.pestCarryover, 0.95),
+      name_es: liveSat.title_es || prevState.name_es,
+      name_en: liveSat.title_en || prevState.name_en,
+      desc_es: liveSat.desc_es || prevState.desc_es,
+      desc_en: liveSat.desc_en || prevState.desc_en,
+      observedDate: liveSat.date || null
+    };
+  }
+
+  const awMmM = finiteNum(useGlobal ? globalParams.awMmM : (ic.awMmM ?? globalParams.awMmM), envContext.suelo.aw_mm_m.media || 130);
+  const toscaCm = finiteNum(useGlobal ? globalParams.toscaCm : (ic.toscaCm ?? globalParams.toscaCm), 100);
+  const initMoisturePct = finiteNum(
     useGlobal
       ? globalParams.initMoisturePct
-      : (ic.initMoisturePct ?? globalParams.initMoisturePct ?? prevState.initMoisturePct)
-  ) || 62;
-  const socGKg = Number(useGlobal ? globalParams.socGKg : (ic.socGKg ?? globalParams.socGKg)) || 18.4;
+      : (ic.initMoisturePct ?? globalParams.initMoisturePct ?? prevState.initMoisturePct),
+    62
+  );
+  const socGKg = finiteNum(useGlobal ? globalParams.socGKg : (ic.socGKg ?? globalParams.socGKg), 18.4);
   const machinery = (useGlobal ? globalParams.machinery : (ic.machinery || globalParams.machinery)) || 'contratista_grano';
   const tillage = ic.tillage || globalParams.tillage || 'siembra_directa';
 
@@ -428,10 +459,20 @@ function simulateStrategyBiophysics(st, globalParams, envContext) {
 
   const { awMmM, toscaCm, initMoisturePct, prevState, tillage, machinery } = st.effectiveInit;
   const awMax = Math.max(40, Math.round(awMmM * (toscaCm / 100)));
-  const areaHa = (Number(globalParams.areaM2) || 100000) / 10000;
+  const areaHa = Math.max(0.1, finiteNum(globalParams.areaM2, 100000) / 10000);
+  const latVal = finiteNum(globalParams.lat, -36.805506);
+  const isNorth = latVal > 0;
 
-  const rainDeltaPct = Number(globalParams.rainDeltaPct) || 0;
-  const tempDeltaC = Number(globalParams.tempDeltaC) || 0;
+  // Alineación a ventanas de siembra (May=4 / Nov=10) para no partir cultivos estivales en febrero ni imputar cosecha no sembrada
+  let offsetToFirstSeason = 0;
+  if (startMonth !== 4 && startMonth !== 10) {
+    const distToMay = (4 - startMonth + 12) % 12;
+    const distToNov = (10 - startMonth + 12) % 12;
+    offsetToFirstSeason = Math.min(distToMay, distToNov);
+  }
+
+  const rainDeltaPct = finiteNum(globalParams.rainDeltaPct, 0);
+  const tempDeltaC = finiteNum(globalParams.tempDeltaC, 0);
   const economicCrisis = Boolean(globalParams.economicCrisis);
 
   const climRain = envContext.clima.precipitacion_mm;
@@ -461,18 +502,19 @@ function simulateStrategyBiophysics(st, globalParams, envContext) {
   const series = [];
 
   for (let m = 0; m < totalMonths; m++) {
-    const simYearIdx = Math.floor(m / 12);
+    const isInitialClosure = m < offsetToFirstSeason || (offsetToFirstSeason === 0 && m === 0 && globalParams.forceClosureFirstMonth);
+    const simYearIdx = isInitialClosure ? 0 : Math.min(st.cycleYears - 1, Math.floor((m - offsetToFirstSeason) / 12));
     const yearSeq = st.sequence[simYearIdx];
     const calMonth = (startMonth + m) % 12; // 0=Ene .. 11=Dic
     const calYear = startYear + Math.floor((startMonth + m) / 12);
 
-    const isWinterWindow = calMonth >= 4 && calMonth <= 9; // May..Oct
+    // Hemisferio Sur: Invierno May–Oct (4..9), Estival Nov–Abr (10..3). Hemisferio Norte: Invierno Nov–Abr (10..3), Estival May–Oct (4..9).
+    const isWinterWindow = isNorth ? (calMonth >= 10 || calMonth <= 3) : (calMonth >= 4 && calMonth <= 9);
     let activeCrop = isWinterWindow ? yearSeq.wCrop : yearSeq.sCrop;
 
-    // Mes 0 refleja la condición de salida del cultivo/estado inicial seleccionado en el Paso 1
-    let isInitTransition = m === 0;
     let stageType = activeCrop.stageType;
     let cropLabel = activeCrop.name_es;
+    let cropLabelEn = activeCrop.name_en;
     let kc = activeCrop.kc;
     let ndvi = activeCrop.ndvi;
     let nAvail = Math.round(32 + (activeCrop.nFix * 0.55));
@@ -482,65 +524,78 @@ function simulateStrategyBiophysics(st, globalParams, envContext) {
     let noteWhy = '';
     let noteImpact = '';
 
-    // Si es el primer mes, modula NDVI/humedad según estado inicial del lote elegido en Paso 1
-    if (isInitTransition) {
-      cropLabel = `${prevState.name_es.split('(')[0].trim()} (Inicio)`;
-      ndvi = prevState.baseNdvi;
-      stageType = prevState.baseNdvi < 0.20 ? 'bare' : (prevState.baseNdvi < 0.45 ? 'stubble' : 'commercial');
-      if (prevState.id === 'pastura_alfalfa' || prevState.id === 'cobertura_vicia_centeno') stageType = 'cover';
-      nAvail = prevState.initN_kgHa;
-      kc = Number(Math.max(0.22, Math.min(1.10, prevState.baseNdvi * 1.15)).toFixed(2));
+    // Transición inicial (desde fecha de análisis hasta el primer mes de siembra de la estrategia): estado actual sin ingresos ficticios de rotación no sembrada
+    if (isInitialClosure) {
+      const initShortEs = prevState.name_es.split('(')[0].replace(/^📡\s*/, '').trim();
+      const initShortEn = prevState.name_en.split('(')[0].replace(/^📡\s*/, '').trim();
+      cropLabel = m === 0 ? `${initShortEs} (Inicio)` : `${initShortEs} (Transición)`;
+      cropLabelEn = m === 0 ? `${initShortEn} (Start)` : `${initShortEn} (Transition)`;
+      const decayPerMonth = prevState.group === 'forrajero' || prevState.baseNdvi < 0.28 ? 0.015 : 0.085;
+      ndvi = Number(Math.max(0.14, Math.min(0.90, prevState.baseNdvi - m * decayPerMonth)).toFixed(2));
+      stageType = (prevState.id === 'pastura_alfalfa' || prevState.id === 'cobertura_vicia_centeno')
+        ? 'cover'
+        : (ndvi < 0.22 ? 'bare' : (ndvi < 0.45 ? 'stubble' : 'commercial'));
+      nAvail = Math.max(15, prevState.initN_kgHa - m * 2);
+      nLeach = Math.max(1, Math.round((100 - prevState.residueCoverPct) * 0.08));
+      kc = Number(Math.max(0.22, Math.min(1.10, ndvi * 1.15)).toFixed(2));
       erosionRisk = Math.max(6, Math.round((100 - prevState.residueCoverPct) * 0.85) + til.erosionAdd);
-      cashDelta = prevState.group === 'estival' ? 180 : 0;
-      noteWhy = `Mes de partida del lote (${prevState.name_es}). NDVI satelital inicial ${prevState.baseNdvi.toFixed(2)}, cobertura de rastrojo ${prevState.residueCoverPct}% y nitrógeno disponible ${prevState.initN_kgHa} kg N/ha.`;
+      cashDelta = 0;
+      noteWhy = m === 0
+        ? `Mes de partida del lote (${prevState.name_es}). NDVI inicial ${ndvi.toFixed(2)}, cobertura superficial ${prevState.residueCoverPct}% y nitrógeno residual ${prevState.initN_kgHa} kg N/ha.`
+        : `Ventana previa a la siembra Año 1 (${offsetToFirstSeason} mes(es) de transición / barbecho previo). Mantiene cobertura residual ${prevState.residueCoverPct}% sin imputar cosechas no sembradas.`;
       noteImpact = prevState.desc_es;
     } else {
       // Modular curva fenológica realista dentro de cada estación
       if (isWinterWindow) {
-        // calMonth: 4(May)=siembra, 5(Jun)=implant, 6(Jul)=macollaje/veg, 7(Ago)-8(Sep)=pico, 9(Oct)=secado/espigazón
-        const phenoPos = (calMonth - 4) / 5; // 0..1
+        const winOrder = isNorth
+          ? { 10: 0, 11: 1, 0: 2, 1: 3, 2: 4, 3: 5 }
+          : { 4: 0, 5: 1, 6: 2, 7: 3, 8: 4, 9: 5 };
+        const idxW = winOrder[calMonth] ?? 2;
+        const phenoPos = idxW / 5; // 0..1
         const bell = Math.sin(Math.PI * (0.2 + 0.75 * phenoPos));
         kc = Number((0.25 + (activeCrop.kc - 0.25) * bell).toFixed(2));
         ndvi = Number(Math.max(0.12, Math.min(0.88, (activeCrop.ndvi - 0.12) * bell + (stageType === 'bare' ? 0.12 : 0.16))).toFixed(2));
-        if (calMonth === 4) cashDelta = -activeCrop.costHa;
-        if (calMonth === 9 && activeCrop.revHa > 0) cashDelta = activeCrop.revHa;
+        if (idxW === 0) cashDelta = -activeCrop.costHa;
+        if (idxW === 5 && activeCrop.revHa > 0) cashDelta = activeCrop.revHa;
 
         if (stageType === 'bare') {
           if (tillage === 'convencional') stageType = 'bare';
           noteWhy = `${activeCrop.name_es}: suelo sin raíces activas en invierno (NDVI ${ndvi.toFixed(2)}). Se pierden nitratos por lixiviación y hay erosión eólica/hídrica.`;
           noteImpact = 'Penaliza C3 (Carbono), C4 (Cobertura), C10 (Nitratos) y C11 (Control erosión).';
         } else if (stageType === 'cover') {
-          noteWhy = calMonth === 9
+          noteWhy = idxW === 5
             ? `${activeCrop.name_es}: fin de ciclo invernal / rolado o secado estratégico. Fijó ${activeCrop.nFix} kg N/ha anuales y protegió el suelo durante el invierno.`
             : `${activeCrop.name_es}: cobertura viva invernal activa captando radiación, frenando erosión y suprimiendo malezas.`;
           noteImpact = 'Impulsa C3 (Carbono), C4 (Cobertura viva), C10 (Retención N) y C11 (Control erosión).';
         } else if (stageType === 'commercial') {
-          noteWhy = calMonth >= 8
+          noteWhy = idxW >= 4
             ? `${activeCrop.name_es}: etapa crítica de espigazón/llenado de grano escapando al pico térmico de verano.`
             : `${activeCrop.name_es}: cereal/leguminosa de renta invernal en crecimiento activo.`;
-          noteImpact = 'Aporta flujo de caja primaveral (C8) y mejora la productividad por milímetro de lluvia (C9).';
+          noteImpact = 'Aporta flujo de caja estacional (C8) y mejora la productividad por milímetro de lluvia (C9).';
         } else {
           noteWhy = `${activeCrop.name_es}: rastrojo pasivo conservando humedad en barbecho sin labranza.`;
           noteImpact = 'Protección parcial contra encostramiento respecto al barbecho desnudo, aunque sin raíces vivas.';
         }
       } else {
-        // Estival: 10(Nov)=siembra, 11(Dic)=veg, 0(Ene)=floración, 1(Feb)=llenado, 2(Mar)-3(Abr)=cosecha
-        const mapOrder = { 10: 0, 11: 1, 0: 2, 1: 3, 2: 4, 3: 5 };
+        // Estival: Sur {10..3}, Norte {4..9}
+        const mapOrder = isNorth
+          ? { 4: 0, 5: 1, 6: 2, 7: 3, 8: 4, 9: 5 }
+          : { 10: 0, 11: 1, 0: 2, 1: 3, 2: 4, 3: 5 };
         const idxS = mapOrder[calMonth] ?? 2;
         const bellS = [0.45, 0.72, 1.00, 0.96, 0.72, 0.38][idxS];
         kc = Number((0.28 + (activeCrop.kc - 0.28) * bellS).toFixed(2));
         ndvi = Number(Math.max(0.14, Math.min(0.88, 0.16 + (activeCrop.ndvi - 0.16) * bellS)).toFixed(2));
-        if (calMonth === 10) cashDelta = -activeCrop.costHa;
-        if (calMonth === 2 && activeCrop.revHa > 0) cashDelta = Math.round(activeCrop.revHa * 0.75);
-        if (calMonth === 3 && activeCrop.revHa > 0) cashDelta = Math.round(activeCrop.revHa * 0.25);
+        if (idxS === 0) cashDelta = -activeCrop.costHa;
+        if (idxS === 4 && activeCrop.revHa > 0) cashDelta = Math.round(activeCrop.revHa * 0.75);
+        if (idxS === 5 && activeCrop.revHa > 0) cashDelta = Math.round(activeCrop.revHa * 0.25);
 
-        if (stageType === 'bare' || tillage === 'convencional' && activeCrop.id === 'barbecho_estival') {
+        if (stageType === 'bare' || (tillage === 'convencional' && activeCrop.id === 'barbecho_estival')) {
           stageType = 'bare';
           ndvi = 0.14;
         }
         noteWhy = idxS === 2
           ? `${activeCrop.name_es}: período crítico estival (floración / máxima demanda Kc=${kc.toFixed(2)}). Sensibilidad alta a estrés térmico e hídrico.`
-          : `${activeCrop.name_es}: ciclo primavero-estival (mes ${idxS + 1}/6 de campaña de verano).`;
+          : `${activeCrop.name_es}: ciclo estival (mes ${idxS + 1}/6 de campaña de verano · Año ${simYearIdx + 1}).`;
         noteImpact = activeCrop.id.includes('sorgo') || activeCrop.id.includes('girasol')
           ? 'Alta estabilidad térmica y menor riesgo de caída de rinde bajo La Niña (C7, C15).'
           : 'Principal generador de ingresos de la campaña anual (C8) y eficiencia hídrica (C9).';
@@ -587,8 +642,10 @@ function simulateStrategyBiophysics(st, globalParams, envContext) {
     ndviSum += ndvi;
 
     // Evolución de SOC mensual (suma mitad invierno + mitad verano + efecto labranza)
-    const monthSocDelta = ((isWinterWindow ? yearSeq.wCrop.socDeltaYear : yearSeq.sCrop.socDeltaYear) + til.socAdd) / 6;
-    cumSocHa += monthSocDelta / 2;
+    const monthSocDelta = isInitialClosure
+      ? (((prevState.residueCoverPct >= 65 ? 0.04 : -0.04) + til.socAdd) / 12)
+      : (((isWinterWindow ? yearSeq.wCrop.socDeltaYear : yearSeq.sCrop.socDeltaYear) + til.socAdd) / 12);
+    cumSocHa += monthSocDelta;
 
     const adjCashDelta = cashDelta * (economicCrisis && cashDelta > 0 ? 0.80 : (economicCrisis && cashDelta < 0 ? 1.18 : 1.0));
     cumCashHa += adjCashDelta;
@@ -601,11 +658,14 @@ function simulateStrategyBiophysics(st, globalParams, envContext) {
 
     series.push({
       index: m,
+      simYearIdx,
+      isInitialClosure,
       label: `${MONTH_NAMES_ES[calMonth]} ${String(calYear).slice(2)}`,
       fullDate: `${MONTH_NAMES_FULL_ES[calMonth]} ${calYear}`,
       stageType,
-      cropId: isInitTransition ? prevState.id : activeCrop.id,
+      cropId: isInitialClosure ? prevState.id : activeCrop.id,
       cropLabel,
+      cropLabel_en: cropLabelEn,
       kc,
       calMonth,
       ndvi,
@@ -723,10 +783,6 @@ function simulateStrategyBiophysics(st, globalParams, envContext) {
   const sharpeBase = (avgNetCashYr / 320) * 30 + (avgThermalTol * 32) - (economicCrisis ? 10 : 0) + (avgNFixYr > 90 && economicCrisis ? 9 : 0);
   const c15 = clampScore(34 + sharpeBase + rainPerturb * 9 - heatPerturb * 5);
 
-  if (machinery === 'mixto_hacienda' && hasPasture) {
-    // Pasturas suben fuerte en C8 liquidez forrajera cuando el productor tiene hacienda
-    // Ajustado directamente antes de retornar
-  }
   const c8Adj = machinery === 'mixto_hacienda' && hasPasture ? clampScore(c8 + 24) : c8;
 
   return {
@@ -761,17 +817,18 @@ function runFullSimulation(params, envContext) {
     ? params.strategies
     : getDefaultStrategies(params.cycleYears, params.prevCrop);
 
-  // Etapas 1 & 3 (Field Shift v4.0): calibración Ypot histórica MAGyP sobre clima normal y suelo de referencia
+  // Etapas 1 & 3 (Field Shift v5.0): calibración Ypot histórica MAGyP sobre clima normal y suelo de referencia (>=3 años para cubrir maíz y soja 1ra)
   const ext = yieldModel.makeExtremesModel(envContext.clima);
   const refParams = {
     ...params,
+    cycleYears: Math.max(3, Math.min(6, params.cycleYears || 2)),
     awMmM: envContext.suelo.aw_mm_m.media || 130,
     toscaCm: 100,
-    initMoisturePct: Number(envContext.suelo.humedad_smap_inicial_pct) || 62,
+    initMoisturePct: finiteNum(envContext.suelo.humedad_smap_inicial_pct, 62),
     rainDeltaPct: 0,
     tempDeltaC: 0
   };
-  const refDefaults = getDefaultStrategies(2, params.prevCrop || 'soja_1ra')
+  const refDefaults = getDefaultStrategies(refParams.cycleYears, params.prevCrop || 'satelite_actual')
     .map((rawSt) => resolveStrategyConfig(rawSt, refParams, envContext, seasonCatalog, initialStates));
   const refSeasons = refDefaults.flatMap((st) =>
     yieldModel.analyzeTimeline(simulateStrategyBiophysics(st, refParams, envContext).timeline, {

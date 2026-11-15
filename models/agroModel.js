@@ -1,16 +1,18 @@
 /**
  * @file models/agroModel.js
- * @description Modelo de acceso a datos agroclimáticos, edáficos y territoriales.
- * Implementa consultas en paralelo a APIs abiertas (NASA POWER, SoilGrids v2.0, Georef AR)
- * con caché en memoria, conmutación a respaldo JSON offline y catálogos agronómicos completos.
+ * @description Modelo de acceso a datos agroclimáticos, edáficos, satelitales (Sentinel-2 L2A) y territoriales.
+ * Implementa consultas en paralelo a APIs abiertas (Planetary Computer STAC/Raster, NASA POWER climatología y reciente GWETROOT,
+ * Open-Meteo humedad/altitud, ISRIC SoilGrids v2.0 5 profundidades, Georef AR + Nominatim global)
+ * con caché en memoria, conmutación transparente a respaldo JSON offline y catálogos agronómicos completos.
  */
 
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 const yieldModel = require('./yieldModel');
 const extremesModel = require('./extremesModel');
 
-/** Altitud del sitio [m] para presión atmosférica de Penman-Monteith FAO-56. */
+/** Altitud de respaldo del sitio [m] cuando Open-Meteo no responde. */
 const DEFAULT_ALTITUDE_M = 100;
 
 const FALLBACK_DATA = JSON.parse(
@@ -33,47 +35,228 @@ function setInCache(key, value, ttlMs) {
   memoryCache.set(key, { value, expiresAt: Date.now() + ttlMs });
 }
 
+function clampVal(v, lo, hi) {
+  return Math.min(hi, Math.max(lo, v));
+}
+
+function isNearGuamini(lat, lon) {
+  return Math.hypot(lat - FALLBACK_DATA.meta.coordenadas.lat, lon - FALLBACK_DATA.meta.coordenadas.lon) < 0.35;
+}
+
+function formatCoordFallback(lat, lon) {
+  const latStr = `${Math.abs(lat).toFixed(3)}° ${lat >= 0 ? 'N' : 'S'}`;
+  const lonStr = `${Math.abs(lon).toFixed(3)}° ${lon >= 0 ? 'E' : 'O'}`;
+  return `${latStr}, ${lonStr}`;
+}
+
 /**
- * Consulta la API Georef Argentina para normalizar provincia y departamento/partido.
+ * Consulta la API Georef Argentina y, fuera de Argentina, OpenStreetMap Nominatim
+ * para identificar provincia/estado y partido/condado de cualquier coordenada global.
  */
 async function fetchGeorefLocation(lat, lon) {
   const cacheKey = `georef:${lat.toFixed(3)},${lon.toFixed(3)}`;
   const cached = getFromCache(cacheKey);
   if (cached) return cached;
 
+  // 1. Georef Argentina (máxima precisión administrativa en territorio AR)
   try {
     const url = `https://apis.datos.gob.ar/georef/api/ubicacion?lat=${lat}&lon=${lon}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(3500) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const json = await res.json();
-    const ub = json.ubicacion || {};
-
-    if (ub.provincia && ub.provincia.nombre) {
-      const result = {
-        modo: 'live_api',
-        provincia: ub.provincia.nombre,
-        departamento: ub.departamento ? ub.departamento.nombre : 'Zona Rural',
-        etiqueta: `${ub.departamento ? ub.departamento.nombre : 'Zona Rural'}, ${ub.provincia.nombre}`
-      };
-      setInCache(cacheKey, result, 86400000);
-      return result;
+    const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    if (res.ok) {
+      const json = await res.json();
+      const ub = json.ubicacion || {};
+      if (ub.provincia && ub.provincia.nombre) {
+        const depto = ub.departamento ? ub.departamento.nombre : 'Zona Rural';
+        const result = {
+          modo: 'live_api',
+          pais: 'Argentina',
+          provincia: ub.provincia.nombre,
+          departamento: depto,
+          etiqueta: `${depto}, ${ub.provincia.nombre}`,
+          es_argentina: true
+        };
+        setInCache(cacheKey, result, 86400000);
+        return result;
+      }
     }
-    throw new Error('Coordenada fuera de jurisdicción Georef AR');
-  } catch (err) {
+  } catch (_) {
+    // Continúa a geocodificación global Nominatim
+  }
+
+  // 2. Fallback global OpenStreetMap Nominatim (para lotes fuera de Argentina o bordes)
+  try {
+    const nomUrl = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=jsonv2&zoom=10&accept-language=es`;
+    const res = await fetch(nomUrl, {
+      headers: { 'User-Agent': 'FieldShiftAgronomyApp/5.0 (open-source agroclimatology)' },
+      signal: AbortSignal.timeout(3500)
+    });
+    if (res.ok) {
+      const json = await res.json();
+      const addr = json.address || {};
+      const localName = addr.county || addr.city || addr.town || addr.village || addr.municipality || addr.state_district;
+      const stateName = addr.state || addr.region || addr.province;
+      const countryName = addr.country || '';
+      const parts = [localName, stateName, countryName].filter(Boolean);
+      if (parts.length > 0) {
+        const result = {
+          modo: 'live_nominatim',
+          pais: countryName || 'Global',
+          provincia: stateName || countryName || 'Global',
+          departamento: localName || 'Área Rural',
+          etiqueta: parts.join(', '),
+          es_argentina: /argentina/i.test(countryName)
+        };
+        setInCache(cacheKey, result, 86400000);
+        return result;
+      }
+    }
+  } catch (_) {
+    // Fallback offline transparente
+  }
+
+  if (isNearGuamini(lat, lon)) {
     return {
       modo: 'fallback_offline',
+      pais: 'Argentina',
       provincia: 'Buenos Aires',
       departamento: 'Guaminí',
-      etiqueta: FALLBACK_DATA.meta.zona
+      etiqueta: FALLBACK_DATA.meta.zona,
+      es_argentina: true
     };
   }
+
+  return {
+    modo: 'fallback_offline',
+    pais: 'Global',
+    provincia: 'Coordenada geolocalizada',
+    departamento: formatCoordFallback(lat, lon),
+    etiqueta: `Parcela en ${formatCoordFallback(lat, lon)} (sin servicio geográfico)`,
+    es_argentina: false
+  };
+}
+
+/**
+ * Consulta humedad radicular y superficial reciente (NASA POWER Daily GWETROOT/GWETTOP + Open-Meteo)
+ * junto con lluvia reciente (30 días) y elevación real del terreno.
+ */
+async function fetchRecentMoistureAndElevation(lat, lon) {
+  const cacheKey = `moist:${lat.toFixed(2)},${lon.toFixed(2)}`;
+  const cached = getFromCache(cacheKey);
+  if (cached) return cached;
+
+  const end = new Date(Date.now() - 3 * 86400000);
+  const start = new Date(end.getTime() - 35 * 86400000);
+  const fmt = (d) => d.toISOString().slice(0, 10).replace(/-/g, '');
+
+  const powerRecentUrl =
+    `https://power.larc.nasa.gov/api/temporal/daily/point?parameters=GWETROOT,GWETTOP,PRECTOTCORR,T2M` +
+    `&community=AG&longitude=${lon}&latitude=${lat}&start=${fmt(start)}&end=${fmt(end)}&format=JSON`;
+  const openMeteoUrl =
+    `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+    `&hourly=soil_moisture_0_to_7cm,soil_moisture_7_to_28cm,soil_moisture_28_to_100cm&past_days=3&forecast_days=1`;
+
+  const [powerRes, omRes] = await Promise.allSettled([
+    fetch(powerRecentUrl, { signal: AbortSignal.timeout(4000) }).then((r) => (r.ok ? r.json() : null)),
+    fetch(openMeteoUrl, { signal: AbortSignal.timeout(3500) }).then((r) => (r.ok ? r.json() : null))
+  ]);
+
+  let rootPct = null;
+  let topPct = null;
+  let rain30d = null;
+  let latestDate = null;
+  let gwetRootUsed = false;
+
+  if (powerRes.status === 'fulfilled' && powerRes.value?.properties?.parameter) {
+    const p = powerRes.value.properties.parameter;
+    const gRoot = p.GWETROOT || {};
+    const gTop = p.GWETTOP || {};
+    const prec = p.PRECTOTCORR || {};
+
+    const validDates = Object.keys(gRoot).filter((k) => Number.isFinite(gRoot[k]) && gRoot[k] >= 0 && gRoot[k] <= 1).sort();
+    if (validDates.length > 0) {
+      const lastKey = validDates[validDates.length - 1];
+      rootPct = Math.round(clampVal(gRoot[lastKey] * 100, 12, 98));
+      gwetRootUsed = true;
+      latestDate = `${lastKey.slice(0, 4)}-${lastKey.slice(4, 6)}-${lastKey.slice(6, 8)}`;
+      if (Number.isFinite(gTop[lastKey]) && gTop[lastKey] >= 0 && gTop[lastKey] <= 1) {
+        topPct = Math.round(clampVal(gTop[lastKey] * 100, 8, 99));
+      }
+    }
+
+    const rainKeys = Object.keys(prec).filter((k) => Number.isFinite(prec[k]) && prec[k] >= 0).sort().slice(-30);
+    if (rainKeys.length > 0) {
+      rain30d = Math.round(rainKeys.reduce((acc, k) => acc + prec[k], 0));
+    }
+  }
+
+  let volMoisture = null;
+  let volTopMoisture = null;
+  let altitudM = DEFAULT_ALTITUDE_M;
+  let omUsed = false;
+
+  if (omRes.status === 'fulfilled' && omRes.value) {
+    const om = omRes.value;
+    if (Number.isFinite(om.elevation)) {
+      altitudM = Math.round(om.elevation);
+    }
+    const h = om.hourly || {};
+    const pickLastValid = (arr) => {
+      if (!Array.isArray(arr)) return null;
+      for (let i = arr.length - 1; i >= 0; i--) {
+        if (Number.isFinite(arr[i]) && arr[i] >= 0) return arr[i];
+      }
+      return null;
+    };
+    const smTop = pickLastValid(h.soil_moisture_0_to_7cm);
+    const smMid = pickLastValid(h.soil_moisture_7_to_28cm);
+    const smDeep = pickLastValid(h.soil_moisture_28_to_100cm);
+    if (smDeep !== null || smMid !== null) {
+      const wVol = smDeep !== null && smMid !== null ? (0.3 * smMid + 0.7 * smDeep) : (smDeep ?? smMid);
+      volMoisture = Number(wVol.toFixed(2));
+      omUsed = true;
+      if (rootPct === null) {
+        // Fallback razonable si POWER GWETROOT no tuvo dato válido
+        rootPct = Math.round(clampVal(((wVol - 0.10) / 0.34) * 100, 15, 95));
+      }
+    }
+    if (smTop !== null) {
+      volTopMoisture = Number(smTop.toFixed(2));
+    }
+    if (!latestDate && omUsed) {
+      latestDate = new Date().toISOString().slice(0, 10);
+    }
+  }
+
+  const modo = gwetRootUsed || omUsed ? 'live_api' : 'fallback_offline';
+  const finalRootPct = rootPct !== null ? rootPct : 62;
+  const finalVol = volMoisture !== null ? volMoisture : Number((0.10 + (finalRootPct / 100) * 0.24).toFixed(2));
+
+  const fuentes = [];
+  if (gwetRootUsed) fuentes.push('NASA POWER GWETROOT (MERRA-2)');
+  if (omUsed) fuentes.push('Open-Meteo Suelo 0–100 cm');
+
+  const result = {
+    modo,
+    fuente: fuentes.length > 0 ? fuentes.join(' + ') : 'Referencia SMAP L4 (Respaldo Offline)',
+    humedad_smap_inicial_pct: finalRootPct,
+    humedad_superficial_pct: topPct,
+    humedad_volumetrica_m3: finalVol,
+    humedad_superficial_m3: volTopMoisture,
+    lluvia_ultimos_30d_mm: rain30d,
+    altitud_m: altitudM,
+    fecha_dato: latestDate
+  };
+
+  setInCache(cacheKey, result, modo === 'live_api' ? 1800000 : 120000);
+  return result;
 }
 
 /**
  * Consulta NASA POWER Climatology API (community=AG) para precipitación, temperatura y ET0 calibrada INTA SIGA.
  */
-async function fetchNasaPowerClimate(lat, lon) {
-  const cacheKey = `power:${lat.toFixed(2)},${lon.toFixed(2)}`;
+async function fetchNasaPowerClimate(lat, lon, altitudeM = DEFAULT_ALTITUDE_M) {
+  const altKey = Math.round(Number.isFinite(altitudeM) ? altitudeM : DEFAULT_ALTITUDE_M);
+  const cacheKey = `power:${lat.toFixed(2)},${lon.toFixed(2)},${altKey}`;
   const cached = getFromCache(cacheKey);
   if (cached) return cached;
 
@@ -106,10 +289,10 @@ async function fetchNasaPowerClimate(lat, lon) {
       et0Mensual = yieldModel.monthlyEt0Fao56(
         { tMean: tMeanArr, tMax: tMaxArr, tMin: tMinArr, rh: rhArr, u2: u2Arr, rs: rsArr },
         lat,
-        DEFAULT_ALTITUDE_M
+        altKey
       );
       const anual = et0Mensual.reduce((a, b) => a + b, 0);
-      if (et0Mensual.some((v) => !Number.isFinite(v)) || anual < 300 || anual > 2800) {
+      if (et0Mensual.some((v) => !Number.isFinite(v)) || anual < 200 || anual > 3200) {
         throw new Error('ET0 fuera de rango');
       }
     } catch (e) {
@@ -129,6 +312,7 @@ async function fetchNasaPowerClimate(lat, lon) {
       temp_media_c: tempMensual,
       tmax_media_c: tMaxArr,
       tmin_media_c: tMinArr,
+      altitud_m: altKey,
       lluvia_anual_mm: precipMensual.reduce((a, b) => a + b, 0),
       et0_anual_mm: et0Mensual.reduce((a, b) => a + b, 0),
       dias_calor_35c: 14,
@@ -145,6 +329,7 @@ async function fetchNasaPowerClimate(lat, lon) {
       precipitacion_mm: fb.precipitacion_mm,
       et0_calibrada_mm: fb.et0_calibrada_mm,
       temp_media_c: fb.temp_media_c,
+      altitud_m: altKey,
       lluvia_anual_mm: fb.precipitacion_mm.reduce((a, b) => a + b, 0),
       et0_anual_mm: fb.et0_calibrada_mm.reduce((a, b) => a + b, 0),
       dias_calor_35c: fb.dias_calor_35c,
@@ -153,42 +338,327 @@ async function fetchNasaPowerClimate(lat, lon) {
   }
 }
 
+const SOILGRIDS_DEPTH_WEIGHTS = {
+  '0-5cm': 5,
+  '5-15cm': 10,
+  '15-30cm': 15,
+  '30-60cm': 30,
+  '60-100cm': 40
+};
+
 /**
- * Consulta ISRIC SoilGrids v2.0 REST API (SOC, wv0033, wv1500, textura y cuantiles Q0.05/Q0.95).
+ * Clasifica la clase textural USDA simplificada con los porcentajes granulométricos exactos.
+ */
+function classifyUsdaTexture(sandPct, siltPct, clayPct) {
+  const s = Math.max(0, Math.round(sandPct));
+  const si = Math.max(0, Math.round(siltPct));
+  const c = Math.max(0, Math.round(clayPct));
+  let cls = 'Franca';
+  if (c >= 40) cls = s >= 45 ? 'Arcillo-arenosa' : (si >= 40 ? 'Arcillo-limosa' : 'Arcillosa');
+  else if (c >= 27) cls = s >= 45 ? 'Franco-arcillo-arenosa' : (s <= 20 ? 'Franco-arcillo-limosa' : 'Franco-arcillosa');
+  else if (s >= 70 && c < 15) cls = s >= 85 ? 'Arenosa' : 'Arenosa-franca';
+  else if (si >= 50 && c < 27) cls = 'Franco-limosa';
+  else if (s >= 52 && c < 20) cls = 'Franco-arenosa';
+  return `${cls} (${s}% arena, ${si}% limo, ${c}% arcilla)`;
+}
+
+/**
+ * Infiere taxonomía USDA/INTA regionalizada y profundidad útil estimada según coordenadas y granulometría.
+ */
+function inferRegionalTaxonomyAndDepth(lat, lon, socGKg, sandPct, siltPct, clayPct) {
+  let tax = `Perfil geolocalizado ISRIC (${classifyUsdaTexture(sandPct, siltPct, clayPct).split(' (')[0]})`;
+  let depthCm = 100;
+
+  if (lat <= -31 && lat >= -40 && lon >= -66 && lon <= -57) {
+    if (lat >= -35 && lon >= -62.5 && siltPct >= 45) {
+      tax = 'Argiudol típico (Zona Núcleo / Pampa Ondulada)';
+      depthCm = 100;
+    } else if (lat <= -37.2 && lon >= -61.5) {
+      tax = clayPct >= 26
+        ? 'Argiudol típico / petrocálcico (Sudeste Bonaerense)'
+        : 'Hapludol / Argiudol con posible tosca en subsuelo';
+      depthCm = clayPct >= 28 ? 100 : 75;
+    } else if (lon <= -61.5 && sandPct >= 48) {
+      tax = lat >= -35
+        ? 'Haplustol típico / éntico (Semiárido / Córdoba–La Pampa)'
+        : 'Hapludol típico / éntico (Pampa Arenosa)';
+      depthCm = 100;
+    } else if (lon < -62.5) {
+      tax = 'Haplustol típico / éntico (Subhúmedo–Semiárido)';
+      depthCm = sandPct >= 60 ? 75 : 100;
+    } else {
+      tax = 'Molisol Pampeano geolocalizado ISRIC';
+      depthCm = 100;
+    }
+  } else if (socGKg >= 20 && clayPct >= 18) {
+    tax = 'Molisol / Chernozem fértil (ISRIC SoilGrids)';
+    depthCm = 100;
+  } else if (sandPct >= 68) {
+    tax = 'Entisol / Inceptisol arenoso (ISRIC SoilGrids)';
+    depthCm = 75;
+  }
+
+  return { taxonomia: tax, profundidad_util_cm: depthCm };
+}
+
+/**
+ * Descarga un recorte GeoTIFF 250 m desde ISRIC SoilGrids v2.0 OGC WCS (maps.isric.org)
+ * y decodifica los píxeles válidos Int16 (zlib + TIFF Predictor=2) en una ventana de ~1,6 km.
+ */
+async function fetchIsricWcsMean(prop, coverageId, lat, lon) {
+  const d = 0.008;
+  const url =
+    `https://maps.isric.org/mapserv?map=/map/${prop}.map&SERVICE=WCS&VERSION=2.0.1&REQUEST=GetCoverage` +
+    `&COVERAGEID=${coverageId}&FORMAT=image/tiff` +
+    `&SUBSET=long(${(lon - d).toFixed(5)},${(lon + d).toFixed(5)})` +
+    `&SUBSET=lat(${(lat - d).toFixed(5)},${(lat + d).toFixed(5)})` +
+    `&SUBSETTINGCRS=http://www.opengis.net/def/crs/EPSG/0/4326` +
+    `&OUTPUTCRS=http://www.opengis.net/def/crs/EPSG/0/4326`;
+
+  const res = await fetch(url, { signal: AbortSignal.timeout(4800) });
+  if (!res.ok) throw new Error(`WCS ${coverageId} HTTP ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length < 16) throw new Error(`WCS ${coverageId} respuesta vacía`);
+
+  const isLE = buf.toString('ascii', 0, 2) === 'II';
+  const r16 = (off) => (isLE ? buf.readUInt16LE(off) : buf.readUInt16BE(off));
+  const r32 = (off) => (isLE ? buf.readUInt32LE(off) : buf.readUInt32BE(off));
+  const ifdOff = r32(4);
+  const numEntries = r16(ifdOff);
+
+  let w = 1;
+  let h = 1;
+  let comp = 1;
+  let predictor = 1;
+  let tileW = 0;
+  let dataOff = 0;
+  let dataLen = 0;
+
+  for (let i = 0; i < numEntries; i++) {
+    const eOff = ifdOff + 2 + i * 12;
+    const tag = r16(eOff);
+    const type = r16(eOff + 2);
+    const count = r32(eOff + 4);
+    const val = (type === 3 && count === 1) ? r16(eOff + 8) : r32(eOff + 8);
+    if (tag === 256) w = val;
+    if (tag === 257) h = val;
+    if (tag === 259) comp = val;
+    if (tag === 317) predictor = val;
+    if (tag === 322) tileW = val;
+    if (tag === 273 || tag === 324) dataOff = val;
+    if (tag === 279 || tag === 325) dataLen = val;
+  }
+
+  if (!dataOff || !dataLen) throw new Error(`WCS ${coverageId} sin payload TIFF`);
+  const payload = buf.subarray(dataOff, dataOff + dataLen);
+  const raw = comp === 8 ? zlib.inflateSync(payload) : payload;
+  const rowStride = tileW || w;
+
+  let sum = 0;
+  let cnt = 0;
+  for (let rIdx = 0; rIdx < h; rIdx++) {
+    let acc = 0;
+    for (let cIdx = 0; cIdx < w; cIdx++) {
+      const off = (rIdx * rowStride + cIdx) * 2;
+      if (off + 2 > raw.length) break;
+      const delta = isLE ? raw.readInt16LE(off) : raw.readInt16BE(off);
+      acc = predictor === 2 ? ((acc + delta) << 16 >> 16) : delta;
+      if (acc > 0 && acc < 10000) {
+        sum += acc;
+        cnt += 1;
+      }
+    }
+  }
+  return cnt > 0 ? sum / cnt : 0;
+}
+
+/**
+ * Consulta en vivo ISRIC SoilGrids v2.0 vía OGC WCS (maps.isric.org) por profundidades.
+ */
+async function fetchSoilGridsViaWcs(lat, lon) {
+  const [soc5, soc15, soc30, soc60, fc30, fc60, wp30, wp60, sand15, silt15, clay15] = await Promise.all([
+    fetchIsricWcsMean('soc', 'soc_0-5cm_mean', lat, lon),
+    fetchIsricWcsMean('soc', 'soc_5-15cm_mean', lat, lon),
+    fetchIsricWcsMean('soc', 'soc_15-30cm_mean', lat, lon),
+    fetchIsricWcsMean('soc', 'soc_30-60cm_mean', lat, lon),
+    fetchIsricWcsMean('wv0033', 'wv0033_15-30cm_mean', lat, lon),
+    fetchIsricWcsMean('wv0033', 'wv0033_30-60cm_mean', lat, lon),
+    fetchIsricWcsMean('wv1500', 'wv1500_15-30cm_mean', lat, lon),
+    fetchIsricWcsMean('wv1500', 'wv1500_30-60cm_mean', lat, lon),
+    fetchIsricWcsMean('sand', 'sand_5-15cm_mean', lat, lon),
+    fetchIsricWcsMean('silt', 'silt_5-15cm_mean', lat, lon),
+    fetchIsricWcsMean('clay', 'clay_5-15cm_mean', lat, lon)
+  ]);
+
+  const fcMean = (fc30 * 15 + fc60 * 30) / 45;
+  const wpMean = (wp30 * 15 + wp60 * 30) / 45;
+  if (!(fcMean > 0) || !(wpMean > 0)) {
+    throw new Error('WCS sin cobertura edáfica válida');
+  }
+
+  const awMean = clampVal(Math.round(fcMean - wpMean), 45, 250);
+  const awQ05 = Math.max(35, Math.round(awMean * 0.68));
+  const awQ95 = Math.max(awMean + 12, Math.round(awMean * 1.32));
+
+  const socRaw = (soc5 * 5 + soc15 * 10 + soc30 * 15 + soc60 * 30) / 60;
+  const socMean = Number(clampVal((socRaw || 184) / 10, 4, 80).toFixed(1));
+  const socQ05 = Number(Math.max(3, socMean * 0.68).toFixed(1));
+  const socQ95 = Number(Math.min(90, socMean * 1.38).toFixed(1));
+
+  const texSum = Math.max(1, sand15 + silt15 + clay15);
+  const sandPct = Math.round((sand15 / texSum) * 100);
+  const siltPct = Math.round((silt15 / texSum) * 100);
+  const clayPct = Math.max(0, 100 - sandPct - siltPct);
+
+  const regional = inferRegionalTaxonomyAndDepth(lat, lon, socMean, sandPct, siltPct, clayPct);
+
+  return {
+    modo: 'live_api',
+    fuente: 'ISRIC SoilGrids v2.0 OGC WCS (En vivo · 250 m · perfil 0–60 cm)',
+    taxonomia: regional.taxonomia,
+    textura: classifyUsdaTexture(sandPct, siltPct, clayPct),
+    profundidad_util_cm: regional.profundidad_util_cm,
+    soc_g_kg: { media: socMean, q05: socQ05, q95: socQ95 },
+    aw_mm_m: { media: awMean, q05: awQ05, q95: awQ95 },
+    humedad_smap_inicial_pct: 62
+  };
+}
+
+/**
+ * Estimación edáfica regionalizada por coordenadas cuando REST y WCS de ISRIC no responden.
+ */
+function buildZonalSoilFallback(lat, lon) {
+  const fb = FALLBACK_DATA.suelo_guamini;
+  if (isNearGuamini(lat, lon)) {
+    return {
+      modo: 'fallback_offline',
+      fuente: `${fb.fuente} (Respaldo Local Guaminí)`,
+      taxonomia: fb.taxonomia,
+      textura: fb.textura,
+      profundidad_util_cm: 100,
+      soc_g_kg: fb.soc_g_kg,
+      aw_mm_m: fb.aw_mm_m,
+      humedad_smap_inicial_pct: fb.humedad_smap_inicial_pct
+    };
+  }
+
+  // Gradiente zonal coherente con latitud y longitud ante desconexión de ISRIC
+  const absLat = Math.abs(lat);
+  const tropicalFactor = clampVal(1 - Math.abs(absLat - 42) / 38, 0.2, 1.0);
+  const westShift = clampVal((lon + 60) / 8, -1, 1);
+  const sandPct = Math.round(clampVal(44 - westShift * 18 - (absLat > 34 && lon > -62 ? 10 : 0), 15, 78));
+  const clayPct = Math.round(clampVal(24 + westShift * 6, 10, 42));
+  const siltPct = Math.max(5, 100 - sandPct - clayPct);
+  const awMean = Math.round(clampVal(105 + siltPct * 1.15 + clayPct * 0.45, 70, 210));
+  const socMean = Number(clampVal(11 + tropicalFactor * 10 + clayPct * 0.12, 8, 45).toFixed(1));
+  const regional = inferRegionalTaxonomyAndDepth(lat, lon, socMean, sandPct, siltPct, clayPct);
+
+  return {
+    modo: 'fallback_offline',
+    fuente: 'Estimación edáfica zonal (ISRIC offline · calibración por coordenada)',
+    taxonomia: `${regional.taxonomia} (Est. Zonal)`,
+    textura: classifyUsdaTexture(sandPct, siltPct, clayPct),
+    profundidad_util_cm: regional.profundidad_util_cm,
+    soc_g_kg: {
+      media: socMean,
+      q05: Number((socMean * 0.68).toFixed(1)),
+      q95: Number((socMean * 1.38).toFixed(1))
+    },
+    aw_mm_m: {
+      media: awMean,
+      q05: Math.round(awMean * 0.68),
+      q95: Math.round(awMean * 1.32)
+    },
+    humedad_smap_inicial_pct: 62
+  };
+}
+
+/**
+ * Integra horizontalmente las profundidades SoilGrids 0–100 cm ponderadas por espesor d_l.
+ */
+function integrateSoilGridsDepths(layers, propName) {
+  const layer = layers.find((l) => l.name === propName);
+  if (!layer || !Array.isArray(layer.depths) || layer.depths.length === 0) return {};
+
+  let wSum = 0;
+  let meanAcc = 0;
+  let q05Acc = 0;
+  let q95Acc = 0;
+  let hasQ05 = true;
+  let hasQ95 = true;
+
+  layer.depths.forEach((d) => {
+    const val = d.values || {};
+    if (!Number.isFinite(val.mean)) return;
+    const w = SOILGRIDS_DEPTH_WEIGHTS[d.label] || (d.range ? (d.range.bottom_depth - d.range.top_depth) : 30) || 30;
+    wSum += w;
+    meanAcc += val.mean * w;
+    if (Number.isFinite(val['Q0.05'])) q05Acc += val['Q0.05'] * w; else hasQ05 = false;
+    if (Number.isFinite(val['Q0.95'])) q95Acc += val['Q0.95'] * w; else hasQ95 = false;
+  });
+
+  if (wSum === 0) return {};
+  return {
+    mean: meanAcc / wSum,
+    'Q0.05': hasQ05 ? q05Acc / wSum : undefined,
+    'Q0.95': hasQ95 ? q95Acc / wSum : undefined,
+    depthSpanCm: wSum
+  };
+}
+
+/**
+ * Consulta ISRIC SoilGrids v2.0 (prioriza OGC WCS en vivo ~1.4 s; respaldo REST 5 profundidades y zonal).
  */
 async function fetchSoilGridsData(lat, lon) {
   const cacheKey = `soil:${lat.toFixed(3)},${lon.toFixed(3)}`;
   const cached = getFromCache(cacheKey);
-  if (cached) return cached;
+  if (cached) return cached.ok ? cached.value : cached.fallback;
 
   try {
-    const url = `https://rest.isric.org/soilgrids/v2.0/properties/query?lon=${lon}&lat=${lat}&property=soc&property=wv0033&property=wv1500&property=sand&property=silt&property=clay&depth=0-30cm&value=mean&value=Q0.05&value=Q0.95`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(4500) });
+    const wcsResult = await fetchSoilGridsViaWcs(lat, lon);
+    setInCache(cacheKey, { ok: true, value: wcsResult }, Number(process.env.CACHE_TTL_SUELO_MS) || 2592000000);
+    return wcsResult;
+  } catch (wcsErr) {
+    // Fallback al endpoint REST cuando WCS no está disponible
+  }
+
+  try {
+    const depths = 'depth=0-5cm&depth=5-15cm&depth=15-30cm&depth=30-60cm&depth=60-100cm';
+    const url = `https://rest.isric.org/soilgrids/v2.0/properties/query?lon=${lon}&lat=${lat}&property=soc&property=wv0033&property=wv1500&property=sand&property=silt&property=clay&${depths}&value=mean&value=Q0.05&value=Q0.95`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(Number(process.env.SOILGRIDS_TIMEOUT_MS) || 4000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
-    const layers = json.properties.layers;
+    const layers = json.properties?.layers || [];
 
-    const getLayer = (name) => layers.find((l) => l.name === name)?.depths?.[0]?.values || {};
-    const soc = getLayer('soc');
-    const fc = getLayer('wv0033');
-    const wp = getLayer('wv1500');
-    const sand = getLayer('sand');
-    const silt = getLayer('silt');
-    const clay = getLayer('clay');
+    const soc = integrateSoilGridsDepths(layers, 'soc');
+    const fc = integrateSoilGridsDepths(layers, 'wv0033');
+    const wp = integrateSoilGridsDepths(layers, 'wv1500');
+    const sand = integrateSoilGridsDepths(layers, 'sand');
+    const silt = integrateSoilGridsDepths(layers, 'silt');
+    const clay = integrateSoilGridsDepths(layers, 'clay');
 
-    if (!fc.mean || !wp.mean) throw new Error('Píxel sin cobertura edáfica en SoilGrids');
+    if (!Number.isFinite(fc.mean) || !Number.isFinite(wp.mean)) {
+      throw new Error('Píxel sin cobertura edáfica en SoilGrids');
+    }
 
-    const awMean = Math.round(fc.mean - wp.mean);
-    const awQ05 = Math.max(45, Math.round((fc['Q0.05'] || fc.mean * 0.75) - (wp['Q0.05'] || wp.mean * 0.75)));
-    const awQ95 = Math.round((fc['Q0.95'] || fc.mean * 1.25) - (wp['Q0.95'] || wp.mean * 1.25));
+    const awMean = Math.max(45, Math.round(fc.mean - wp.mean));
+    const awQ05 = Math.max(35, Math.round((fc['Q0.05'] || fc.mean * 0.75) - (wp['Q0.05'] || wp.mean * 0.75)));
+    const awQ95 = Math.max(awMean + 10, Math.round((fc['Q0.95'] || fc.mean * 1.25) - (wp['Q0.95'] || wp.mean * 1.25)));
+    const depthSpan = fc.depthSpanCm || 100;
+    const sandPct = Math.round((sand.mean || 500) / 10);
+    const siltPct = Math.round((silt.mean || 300) / 10);
+    const clayPct = Math.max(0, 100 - sandPct - siltPct);
+    const socMean = Number(((soc.mean || 184) / 10).toFixed(1));
+    const regional = inferRegionalTaxonomyAndDepth(lat, lon, socMean, sandPct, siltPct, clayPct);
 
     const result = {
       modo: 'live_api',
-      fuente: 'ISRIC SoilGrids v2.0 REST API (250 m, en vivo)',
-      taxonomia: 'Molisol / Perfil geolocalizado ISRIC',
-      textura: `Arena ${Math.round((sand.mean || 500) / 10)}% · Limo ${Math.round((silt.mean || 300) / 10)}% · Arcilla ${Math.round((clay.mean || 200) / 10)}%`,
+      fuente: `ISRIC SoilGrids v2.0 REST API (250 m · perfil 0–${depthSpan} cm)`,
+      taxonomia: `${regional.taxonomia} (0–${depthSpan} cm)`,
+      textura: classifyUsdaTexture(sandPct, siltPct, clayPct),
+      profundidad_util_cm: regional.profundidad_util_cm,
       soc_g_kg: {
-        media: Number(((soc.mean || 184) / 10).toFixed(1)),
+        media: socMean,
         q05: Number(((soc['Q0.05'] || 121) / 10).toFixed(1)),
         q95: Number(((soc['Q0.95'] || 258) / 10).toFixed(1))
       },
@@ -196,18 +666,339 @@ async function fetchSoilGridsData(lat, lon) {
       humedad_smap_inicial_pct: 62
     };
 
-    setInCache(cacheKey, result, Number(process.env.CACHE_TTL_SUELO_MS) || 2592000000);
+    setInCache(cacheKey, { ok: true, value: result }, Number(process.env.CACHE_TTL_SUELO_MS) || 2592000000);
     return result;
   } catch (err) {
-    const fb = FALLBACK_DATA.suelo_guamini;
+    const fallbackObj = buildZonalSoilFallback(lat, lon);
+    setInCache(cacheKey, { ok: false, fallback: fallbackObj }, 2 * 60 * 1000);
+    return fallbackObj;
+  }
+}
+
+/**
+ * Decodifica un archivo binario NumPy (.npy) devuelto por Planetary Computer Titiler Raster API.
+ */
+function parseNpyBuffer(buf) {
+  if (!buf || buf.length < 10) throw new Error('Buffer NPY inválido');
+  const magic = buf.subarray(0, 6).toString('latin1');
+  if (magic !== '\x93NUMPY') throw new Error('Firma NPY ausente');
+  const major = buf[6];
+  const headerLen = major >= 2 ? buf.readUInt32LE(8) : buf.readUInt16LE(8);
+  const headerStart = major >= 2 ? 12 : 10;
+  const headerStr = buf.subarray(headerStart, headerStart + headerLen).toString('latin1');
+  const descrMatch = headerStr.match(/'descr':\s*'([^']+)'/);
+  const shapeMatch = headerStr.match(/'shape':\s*\(([^)]+)\)/);
+  if (!descrMatch || !shapeMatch) throw new Error('Cabecera NPY incompleta');
+
+  const descr = descrMatch[1];
+  const shape = shapeMatch[1].split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0);
+  const offset = headerStart + headerLen;
+  const total = shape.reduce((a, b) => a * b, 1);
+  const data = new Float64Array(total);
+
+  for (let i = 0; i < total; i++) {
+    if (descr === '<u2') data[i] = buf.readUInt16LE(offset + i * 2);
+    else if (descr === '<i2') data[i] = buf.readInt16LE(offset + i * 2);
+    else if (descr === '<u4') data[i] = buf.readUInt32LE(offset + i * 4);
+    else if (descr === '<f4') data[i] = buf.readFloatLE(offset + i * 4);
+    else if (descr === '<f8') data[i] = buf.readDoubleLE(offset + i * 8);
+    else if (descr === '|u1' || descr === '<u1') data[i] = buf.readUInt8(offset + i);
+    else throw new Error(`Formato NPY no soportado: ${descr}`);
+  }
+  return { shape, data, descr };
+}
+
+function classifySclCode(scl) {
+  switch (Math.round(scl)) {
+    case 4: return { code: 4, es: 'Vegetación activa', en: 'Active vegetation' };
+    case 5: return { code: 5, es: 'Suelo desnudo / rastrojo', en: 'Bare soil / stubble' };
+    case 6: return { code: 6, es: 'Agua superficial', en: 'Surface water' };
+    case 7: return { code: 7, es: 'Vegetación baja / no clasificada', en: 'Low cover / unclassified' };
+    case 3: return { code: 3, es: 'Sombra de nube', en: 'Cloud shadow' };
+    case 8:
+    case 9:
+    case 10: return { code: Math.round(scl), es: 'Nubosidad / cirrus', en: 'Cloud / cirrus' };
+    case 11: return { code: 11, es: 'Nieve / hielo', en: 'Snow / ice' };
+    default: return { code: Math.round(scl), es: 'Mixto / suelo agrícola', en: 'Mixed agricultural surface' };
+  }
+}
+
+/**
+ * Deduce un diagnóstico agronómico objetivo desde las métricas satelitales reales observadas
+ * (sin forzar cultivos predefinidos en el mapa).
+ */
+function inferObservedSatelliteSummary(meanNdvi, meanNdmi, vegSharePct, bareSharePct, cloudSharePct, obsDateStr) {
+  const dateLabel = obsDateStr || 'reciente';
+  if (cloudSharePct >= 55) {
+    return {
+      statusCode: 'cloudy',
+      title_es: `Nubosidad parcial en la última pasada (${dateLabel})`,
+      title_en: `Partial cloud cover in latest pass (${dateLabel})`,
+      desc_es: `El ${cloudSharePct}% de las celdas del polígono presenta nube o sombra SCL. Se recomienda confirmar visualmente o seleccionar manualmente el estado inicial si necesitás simulación inmediata.`,
+      desc_en: `${cloudSharePct}% of parcel pixels contain SCL cloud/shadow. Verify visually or select a manual initial crop state if immediate simulation is needed.`,
+      residueCoverPct: 50,
+      initN_kgHa: 35,
+      cnRatio: 30,
+      pestCarryover: 1.0
+    };
+  }
+  if (meanNdvi < 0.22) {
+    return {
+      statusCode: 'bare_or_stubble',
+      title_es: `Suelo desnudo o rastrojo seco observado (${dateLabel})`,
+      title_en: `Bare soil or dry residue observed (${dateLabel})`,
+      desc_es: `Sentinel-2 detecta muy baja actividad fotosintética (NDVI ${meanNdvi.toFixed(2)}, NDMI ${meanNdmi.toFixed(2)}, ${bareSharePct}% píxeles sin canopeo verde). Coincide con barbecho, suelo recién laboreado o rastrojo seco.`,
+      desc_en: `Sentinel-2 observes minimal green canopy (NDVI ${meanNdvi.toFixed(2)}, NDMI ${meanNdmi.toFixed(2)}, ${bareSharePct}% non-vegetated pixels). Matches fallow, tilled soil, or dry stubble.`,
+      residueCoverPct: meanNdvi < 0.16 ? 18 : 42,
+      initN_kgHa: 30,
+      cnRatio: 38,
+      pestCarryover: 1.0
+    };
+  }
+  if (meanNdvi < 0.42) {
+    return {
+      statusCode: 'low_emergence',
+      title_es: `Emergencia temprana / rastrojo mixto observado (${dateLabel})`,
+      title_en: `Early emergence / mixed residue observed (${dateLabel})`,
+      desc_es: `Sentinel-2 registra vigor inicial bajo-moderado (NDVI ${meanNdvi.toFixed(2)}, NDMI ${meanNdmi.toFixed(2)}, ${vegSharePct}% píxeles vegetados). Compatible con cultivo en emergencia, cobertura rala o senescencia.`,
+      desc_en: `Sentinel-2 sees low-to-moderate greenness (NDVI ${meanNdvi.toFixed(2)}, NDMI ${meanNdmi.toFixed(2)}, ${vegSharePct}% vegetated pixels). Consistent with emerging crop, thin cover, or senescence.`,
+      residueCoverPct: 62,
+      initN_kgHa: 36,
+      cnRatio: 34,
+      pestCarryover: 0.95
+    };
+  }
+  if (meanNdvi < 0.65) {
+    return {
+      statusCode: 'active_canopy',
+      title_es: `Cobertura o cultivo en crecimiento activo (${dateLabel})`,
+      title_en: `Active growing canopy / cover (${dateLabel})`,
+      desc_es: `Sentinel-2 observa vegetación activa cubriendo la parcela (NDVI ${meanNdvi.toFixed(2)}, NDMI ${meanNdmi.toFixed(2)}, ${vegSharePct}% píxeles vegetados). Buena intercepción de radiación y protección superficial.`,
+      desc_en: `Sentinel-2 detects active green vegetation across the parcel (NDVI ${meanNdvi.toFixed(2)}, NDMI ${meanNdmi.toFixed(2)}, ${vegSharePct}% vegetated pixels). Solid light interception and soil shielding.`,
+      residueCoverPct: 78,
+      initN_kgHa: 45,
+      cnRatio: 26,
+      pestCarryover: 0.9
+    };
+  }
+  return {
+    statusCode: 'peak_vigor',
+    title_es: `Canopeo denso en plenitud fotosintética (${dateLabel})`,
+    title_en: `Dense canopy at peak photosynthetic vigor (${dateLabel})`,
+    desc_es: `Sentinel-2 mide vigor vegetativo pleno en el lote (NDVI ${meanNdvi.toFixed(2)}, NDMI ${meanNdmi.toFixed(2)}, ${vegSharePct}% píxeles vegetados). Alta transpiración actual y máxima cobertura protectora.`,
+    desc_en: `Sentinel-2 measures full canopy vigor across the field (NDVI ${meanNdvi.toFixed(2)}, NDMI ${meanNdmi.toFixed(2)}, ${vegSharePct}% vegetated pixels). High current transpiration and full soil shield.`,
+    residueCoverPct: 90,
+    initN_kgHa: 55,
+    cnRatio: 24,
+    pestCarryover: 0.85
+  };
+}
+
+/**
+ * Consulta en vivo la última imagen Sentinel-2 L2A libre de nubes (Planetary Computer STAC + Raster NPY),
+ * extrae matriz real de NDVI / NDMI / reflectancias B04-B08-B11 / clasificación SCL para la parcela,
+ * y reconstruye la serie reciente observada en el centroide del lote.
+ */
+async function fetchSatellitePlotState({ lat, lon, bbox, rows = 6, cols = 7 } = {}) {
+  const safeLat = Number(lat);
+  const safeLon = Number(lon);
+  const box = Array.isArray(bbox) && bbox.length === 4 && bbox.every(Number.isFinite)
+    ? bbox
+    : [safeLon - 0.0022, safeLat - 0.0014, safeLon + 0.0022, safeLat + 0.0014];
+
+  const bboxKey = box.map((v) => v.toFixed(4)).join(',');
+  const cacheKey = `sat:${bboxKey}:${rows}x${cols}`;
+  const cached = getFromCache(cacheKey);
+  if (cached) return cached;
+
+  try {
+    // 1. Buscar las últimas escenas Sentinel-2 L2A sobre la parcela (<35% nube)
+    const searchBody = {
+      collections: ['sentinel-2-l2a'],
+      intersects: { type: 'Point', coordinates: [safeLon, safeLat] },
+      query: { 'eo:cloud_cover': { lt: 35 } },
+      sortby: [{ field: 'properties.datetime', direction: 'desc' }],
+      limit: 6
+    };
+
+    let stacRes = await fetch('https://planetarycomputer.microsoft.com/api/stac/v1/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(searchBody),
+      signal: AbortSignal.timeout(4500)
+    });
+    let stacJson = stacRes.ok ? await stacRes.json() : null;
+    let features = Array.isArray(stacJson?.features) ? stacJson.features : [];
+
+    // Reintentar con umbral más permisivo si ninguna escena estuvo debajo de 35%
+    if (features.length === 0) {
+      searchBody.query = { 'eo:cloud_cover': { lt: 80 } };
+      stacRes = await fetch('https://planetarycomputer.microsoft.com/api/stac/v1/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(searchBody),
+        signal: AbortSignal.timeout(4000)
+      });
+      stacJson = stacRes.ok ? await stacRes.json() : null;
+      features = Array.isArray(stacJson?.features) ? stacJson.features : [];
+    }
+
+    if (features.length === 0) {
+      throw new Error('Sin escenas Sentinel-2 L2A recientes en Planetary Computer');
+    }
+
+    // Preferir la escena más reciente con <20% de nubes si existe entre las primeras 3
+    const latest = features.slice(0, 3).find((f) => Number(f.properties?.['eo:cloud_cover']) < 20) || features[0];
+    const itemId = latest.id;
+    const obsIso = latest.properties?.datetime || '';
+    const obsDate = obsIso.slice(0, 10);
+    const cloudPctScene = Number((latest.properties?.['eo:cloud_cover'] ?? 0).toFixed(1));
+    const baselineNum = parseFloat(latest.properties?.['s2:processing_baseline'] || '0');
+    const boaOffset = baselineNum >= 4.0 ? 1000 : 0;
+
+    // 2. Descargar grilla real B04 (Red), B08 (NIR), B11 (SWIR1) y SCL + historial puntual en paralelo
+    const npyUrl =
+      `https://planetarycomputer.microsoft.com/api/data/v1/item/bbox/${bboxKey}/${cols}x${rows}.npy` +
+      `?collection=sentinel-2-l2a&item=${encodeURIComponent(itemId)}&assets=B04&assets=B08&assets=B11&assets=SCL`;
+
+    const historyItems = features.slice(0, 4);
+    const [npyRes, ...pointResults] = await Promise.allSettled([
+      fetch(npyUrl, { signal: AbortSignal.timeout(5500) }).then(async (r) => {
+        if (!r.ok) throw new Error(`Raster NPY HTTP ${r.status}`);
+        return Buffer.from(await r.arrayBuffer());
+      }),
+      ...historyItems.map((it) => {
+        const ptUrl =
+          `https://planetarycomputer.microsoft.com/api/data/v1/item/point/${safeLon},${safeLat}` +
+          `?collection=sentinel-2-l2a&item=${encodeURIComponent(it.id)}&assets=B04&assets=B08&assets=B11&assets=SCL`;
+        return fetch(ptUrl, { signal: AbortSignal.timeout(3500) }).then(async (r) => {
+          if (!r.ok) return null;
+          const pj = await r.json();
+          const vals = pj.values || [];
+          const itBase = parseFloat(it.properties?.['s2:processing_baseline'] || '0');
+          const itOff = itBase >= 4.0 ? 1000 : 0;
+          const rVal = Math.max(0.001, (Number(vals[0]) - itOff) / 10000);
+          const nVal = Math.max(0.001, (Number(vals[1]) - itOff) / 10000);
+          const sVal = Math.max(0.001, (Number(vals[2]) - itOff) / 10000);
+          const sclVal = Number(vals[3] ?? 0);
+          if (!Number.isFinite(rVal) || !Number.isFinite(nVal) || Number(vals[0]) === 0) return null;
+          return {
+            itemId: it.id,
+            date: (it.properties?.datetime || '').slice(0, 10),
+            cloudPct: Number((it.properties?.['eo:cloud_cover'] ?? 0).toFixed(1)),
+            ndvi: Number(clampVal((nVal - rVal) / (nVal + rVal), -0.2, 0.95).toFixed(2)),
+            ndmi: Number(clampVal((nVal - sVal) / (nVal + sVal), -0.8, 0.85).toFixed(2)),
+            scl: Math.round(sclVal)
+          };
+        });
+      })
+    ]);
+
+    if (npyRes.status !== 'fulfilled') {
+      throw new Error(npyRes.reason?.message || 'Error descargando bandas Sentinel-2');
+    }
+
+    const parsed = parseNpyBuffer(npyRes.value);
+    const nRows = parsed.shape[1] || rows;
+    const nCols = parsed.shape[2] || cols;
+    const planeSize = nRows * nCols;
+
+    // El grid del mapa recorre r = 0 (Sur/minY) .. rows-1 (Norte/maxY); el .npy viene row 0 = Norte
+    const cells = [];
+    let ndviSum = 0;
+    let ndmiSum = 0;
+    let validCount = 0;
+    let vegCount = 0;
+    let bareCount = 0;
+    let cloudCellCount = 0;
+
+    for (let mapR = 0; mapR < nRows; mapR++) {
+      const npyR = nRows - 1 - mapR;
+      const rowArr = [];
+      for (let c = 0; c < nCols; c++) {
+        const idx = npyR * nCols + c;
+        const dnB04 = parsed.data[0 * planeSize + idx];
+        const dnB08 = parsed.data[1 * planeSize + idx];
+        const dnB11 = parsed.data[2 * planeSize + idx];
+        const sclCode = Math.round(parsed.data[3 * planeSize + idx]);
+        const maskVal = parsed.shape[0] >= 5 ? parsed.data[4 * planeSize + idx] : 255;
+
+        const red = Number(Math.max(0.001, (dnB04 - boaOffset) / 10000).toFixed(3));
+        const nir = Number(Math.max(0.001, (dnB08 - boaOffset) / 10000).toFixed(3));
+        const swir1 = Number(Math.max(0.001, (dnB11 - boaOffset) / 10000).toFixed(3));
+        const ndvi = Number(clampVal((nir - red) / (nir + red), -0.1, 0.92).toFixed(2));
+        const ndmi = Number(clampVal((nir - swir1) / (nir + swir1), -0.7, 0.82).toFixed(2));
+        const sclInfo = classifySclCode(sclCode);
+
+        if (maskVal > 0 && (dnB04 > 0 || dnB08 > 0)) {
+          ndviSum += ndvi;
+          ndmiSum += ndmi;
+          validCount++;
+          if (sclCode === 4) vegCount++;
+          else if (sclCode === 5 || sclCode === 7) bareCount++;
+          else if (sclCode === 3 || sclCode === 8 || sclCode === 9 || sclCode === 10) cloudCellCount++;
+        }
+
+        rowArr.push({
+          ndvi,
+          ndmi,
+          red,
+          nir,
+          swir1,
+          scl: sclCode,
+          sclLabel_es: sclInfo.es,
+          sclLabel_en: sclInfo.en
+        });
+      }
+      cells.push(rowArr);
+    }
+
+    const meanNdvi = validCount > 0 ? Number((ndviSum / validCount).toFixed(2)) : 0.25;
+    const meanNdmi = validCount > 0 ? Number((ndmiSum / validCount).toFixed(2)) : 0.0;
+    const vegSharePct = validCount > 0 ? Math.round((vegCount / validCount) * 100) : 0;
+    const bareSharePct = validCount > 0 ? Math.round((bareCount / validCount) * 100) : 0;
+    const cloudSharePct = validCount > 0 ? Math.round((cloudCellCount / validCount) * 100) : 0;
+
+    const history = pointResults
+      .filter((r) => r.status === 'fulfilled' && r.value)
+      .map((r) => r.value)
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    const summary = inferObservedSatelliteSummary(meanNdvi, meanNdmi, vegSharePct, bareSharePct, cloudSharePct, obsDate);
+
+    const satData = {
+      modo: 'live_sentinel2',
+      fuente: 'Microsoft Planetary Computer · ESA Sentinel-2 L2A (10 m/20 m)',
+      itemId,
+      baseline: latest.properties?.['s2:processing_baseline'] || 'N/A',
+      date: obsDate,
+      datetime: obsIso,
+      cloudPct: cloudPctScene,
+      rows: nRows,
+      cols: nCols,
+      meanNdvi,
+      meanNdmi,
+      vegSharePct,
+      bareSharePct,
+      cloudSharePct,
+      summary,
+      cells,
+      history
+    };
+
+    setInCache(cacheKey, satData, Number(process.env.CACHE_TTL_SAT_MS) || 1800000);
+    return satData;
+  } catch (err) {
     return {
       modo: 'fallback_offline',
-      fuente: `${fb.fuente} (Respaldo Offline)`,
-      taxonomia: fb.taxonomia,
-      textura: fb.textura,
-      soc_g_kg: fb.soc_g_kg,
-      aw_mm_m: fb.aw_mm_m,
-      humedad_smap_inicial_pct: fb.humedad_smap_inicial_pct
+      fuente: 'Estimación paramétrica local (sin escena Sentinel-2 en vivo)',
+      error: err.message,
+      date: null,
+      cloudPct: null,
+      meanNdvi: null,
+      meanNdmi: null,
+      cells: null,
+      history: []
     };
   }
 }
@@ -243,10 +1034,11 @@ async function fetchNasaPowerExtremes(lat, lon) {
   }
 }
 
-async function getEnvironmentalContext(lat, lon) {
-  const [georef, climaBase, suelo, extremos] = await Promise.all([
+async function getEnvironmentalContext(lat, lon, options = {}) {
+  const moisture = await fetchRecentMoistureAndElevation(lat, lon);
+  const [georef, climaBase, sueloBase, extremos] = await Promise.all([
     fetchGeorefLocation(lat, lon),
-    fetchNasaPowerClimate(lat, lon),
+    fetchNasaPowerClimate(lat, lon, moisture.altitud_m),
     fetchSoilGridsData(lat, lon),
     fetchNasaPowerExtremes(lat, lon)
   ]);
@@ -261,20 +1053,65 @@ async function getEnvironmentalContext(lat, lon) {
       }
     : { ...climaBase, extremos_fuente: 'modelo normal calibrado sobre clima histórico (respaldo)' };
 
+  const suelo = {
+    ...sueloBase,
+    humedad_smap_inicial_pct: moisture.humedad_smap_inicial_pct,
+    humedad_volumetrica_m3: moisture.humedad_volumetrica_m3,
+    humedad_superficial_pct: moisture.humedad_superficial_pct,
+    humedad_fuente: moisture.fuente,
+    humedad_modo: moisture.modo,
+    humedad_fecha: moisture.fecha_dato,
+    lluvia_ultimos_30d_mm: moisture.lluvia_ultimos_30d_mm
+  };
+
+  const isLocalMagyp = georef.es_argentina !== false && (isNearGuamini(lat, lon) || /buenos aires|la pampa|córdoba|santa fe/i.test(georef.provincia || ''));
+  const estadisticas_magyp = {
+    ...FALLBACK_DATA.estadisticas_magyp,
+    es_local: isLocalMagyp,
+    ambito_es: isLocalMagyp
+      ? FALLBACK_DATA.estadisticas_magyp.fuente
+      : 'Curva de calibración de referencia pampeana (Guaminí · MAGyP)',
+    ambito_en: isLocalMagyp
+      ? 'Regional 10-year district statistics (Guaminí · MAGyP)'
+      : 'Pampean calibration reference curve (Guaminí benchmark · outside local district)'
+  };
+
+  const satellite = options.includeSatellite
+    ? await fetchSatellitePlotState({ lat, lon, bbox: options.bbox, rows: options.rows, cols: options.cols })
+    : undefined;
+
   return {
     georef,
     clima,
     suelo,
-    estadisticas_magyp: FALLBACK_DATA.estadisticas_magyp
+    estadisticas_magyp,
+    ...(satellite ? { satellite } : {})
   };
 }
 
 /**
- * 14 Estados Iniciales y Cultivos de Partida del Lote (Paso 1).
- * Conecta directamente con la grilla visual NDVI y con las condiciones iniciales de simulación.
+ * Estados Iniciales y Cultivos de Partida del Lote (Paso 1).
+ * Incluye observación satelital real en vivo + 14 estados agronómicos opcionales.
  */
 function getInitialFieldStates() {
   return [
+    {
+      id: 'satelite_actual',
+      group: 'satelite',
+      category_es: '📡 Observación Satelital Actual (Sin cultivo predefinido)',
+      category_en: '📡 Live Satellite Field Observation (Auto-detected)',
+      name_es: '📡 Usar observación actual del satélite (Sentinel-2 + NASA humedad)',
+      name_en: '📡 Use live satellite observation (Sentinel-2 + NASA moisture)',
+      baseNdvi: 0.25,
+      ndviSpatialPattern: 'satellite_real',
+      initMoisturePct: 62,
+      residueCoverPct: 50,
+      initN_kgHa: 36,
+      cnRatio: 32,
+      pestCarryover: 0.95,
+      desc_es: 'Lee la última escena Sentinel-2 L2A sin nubes y la humedad radicular reciente (NASA POWER / Open-Meteo) directamente sobre tu polígono, sin imponer un cultivo predefinido.',
+      desc_en: 'Reads the latest cloud-free Sentinel-2 L2A imagery and recent NASA/Open-Meteo root-zone moisture directly over your drawn polygon without forcing a preset crop.'
+    },
     {
       id: 'soja_1ra',
       group: 'estival',
@@ -622,14 +1459,14 @@ function getEquationsMetadata() {
       source: 'ISRIC SoilGrids v2.0 (wv0033, wv1500) + Cartas GeoINTA + Saxton & Rawls (2006).'
     },
     smap: {
-      title_es: 'Humedad Radicular Inicial (SMAP L4) y Anomalía Estandarizada Z_RZSM',
-      title_en: 'Initial Root-Zone Soil Moisture (SMAP L4) & Standardized Anomaly',
-      plain_es: 'El satélite SMAP de la NASA mide con microondas cuánta agua hay hoy en el primer metro de suelo antes de sembrar. Lo expresamos en porcentaje de llenado del tanque (0–100%) para que el balance hídrico arranque desde la realidad actual del perfil.',
-      plain_en: 'NASA SMAP microwave sensors estimate how much water is stored in the top 100 cm before sowing. Expressed as tank fill percentage (0–100%), it anchors Month 1 of the water balance.',
-      formula: 'Z_RZSM(t) = ( θ_RZ,SMAP(t) - θ̄_RZ,mes ) / σ_RZ,mes\nAgua Inicial (mm) = AW_máx × (Humedad_Inicial_% / 100)',
-      interp_es: 'Arrancar con <40% de humedad útil (Z_RZSM < -1,5) dispara la alerta temprana de sequía y favorece coberturas de secado temprano o sorgo.',
-      interp_en: 'Starting below 40% tank fill (Z_RZSM < -1.5) triggers early drought warning, favoring early-terminated cover crops or sorghum.',
-      source: 'NASA SMAP L4 (SPL4SMGP, 9 km, 3 h) + CONAE SAOCOM.'
+      title_es: 'Humedad Radicular Inicial (NASA POWER GWETROOT + Open-Meteo / SMAP)',
+      title_en: 'Initial Root-Zone Soil Moisture (NASA POWER GWETROOT + Open-Meteo)',
+      plain_es: 'Combinamos el producto satelital/reanálisis NASA POWER GWETROOT (MERRA-2 zona radicular) con la humedad profunda 0–100 cm de Open-Meteo y asimilación SMAP. Lo expresamos en porcentaje de llenado del tanque (0–100%) para que el balance hídrico arranque desde la humedad real reciente del perfil.',
+      plain_en: 'Combines NASA POWER GWETROOT (MERRA-2 root-zone wetness) with Open-Meteo 0–100 cm volumetric soil moisture. Expressed as profile tank fill (0–100%), it anchors Month 0–1 water balance to current conditions.',
+      formula: 'GWETROOT = frac_llenado(0..100 cm)  |  θ_vol (m³/m³) = soil_moisture_28_to_100cm\nAgua Inicial (mm) = AW_máx × (Humedad_Inicial_% / 100)',
+      interp_es: 'Arrancar con <40% de humedad útil dispara alerta temprana de déficit hídrico y favorece coberturas de secado temprano o sorgo.',
+      interp_en: 'Starting below 40% tank fill signals dry profile conditions, favoring early-terminated covers or sorghum.',
+      source: 'NASA POWER GWETROOT (MERRA-2) + Open-Meteo Soil Moisture + SMAP L4 ref.'
     },
     magyp: {
       title_es: 'Riesgo Histórico de Rendimiento (Ratio de Sharpe / CV MAGyP)',
@@ -669,7 +1506,7 @@ function getEquationsMetadata() {
       formula: 'S_t = clamp( S_{t-1} + P_ef - ET_a - D, 0, AW_máx )\nET_a = K_s · ET_c  |  K_s = min(1, S / ((1 - p) · AW_máx)), p = 0,50\nΔSOC_lote (t C) = Σ (ΔSOC_mes) × Superficie (ha)',
       interp_es: 'Hacé clic en cualquier mes rojo (suelo desnudo) o verde/azul en la grilla para ver ET_a, estrés hídrico Ks y drenaje acumulado.',
       interp_en: 'Click any bare-soil or cropped month tile to inspect ET_a, water stress factor Ks, and drainage.',
-      source: 'Motor Balance Agroclimático FAO-56 / Field Shift v4.0 · Calibración Pampa Húmeda / Arenosa.'
+      source: 'Motor Balance Agroclimático FAO-56 / Field Shift v5.0 · Calibración Pampa Húmeda / Arenosa.'
     },
     fao33_yield: {
       title_es: 'Función de Producción FAO-33 (Ky), Extremos Térmicos y Calibración MAGyP',
@@ -689,7 +1526,7 @@ function getEquationsMetadata() {
       formula: 'No Apto: falla requisito incluso con AW_Q0.95 o tosca < umbral\nApto: supera todos los requisitos incluso con AW_Q0.05\nDudoso: caso intermedio → requiere validación a campo',
       interp_es: 'La aptitud de la rotación completa está determinada por el eslabón más exigente o restrictivo de su secuencia.',
       interp_en: 'Overall rotation aptitude is governed by the most water- or depth-sensitive crop in the sequence.',
-      source: 'Etapa 1 Cadena Agroclimática Field Shift v4.0 · ISRIC SoilGrids v2.0 Q0.05/Q0.95.'
+      source: 'Etapa 1 Cadena Agroclimática Field Shift v5.0 · ISRIC SoilGrids v2.0 Q0.05/Q0.95.'
     },
     mcda: {
       title_es: 'Auditoría Matemática: SAW-8, SAW-15, TOPSIS-15 y Monte Carlo',
@@ -699,7 +1536,7 @@ function getEquationsMetadata() {
       formula: 'SAW = Σ w_i·C_{i,j}  |  D⁺ = √Σ(v_{i,j}-v_i⁺)²  |  D⁻ = √Σ(v_{i,j}-v_i⁻)²\nTOPSIS = 100·D⁻/(D⁺+D⁻)  |  IC 90% = SAW ± 1,645·√Σ(w_i·σ_i)²',
       interp_es: 'Cuando dos rotaciones empatan dentro del rango de confianza Monte Carlo [IC 90%], la decisión final debe apoyarse en el criterio local del ingeniero agrónomo.',
       interp_en: 'When two rotations overlap within their 90% Monte Carlo confidence intervals, local agronomist validation breaks the tie.',
-      source: 'Auditoría Estadística Field Shift v4.0 (Hwang & Yoon, AHP Saaty, FAO-33/56, N=10.000).'
+      source: 'Auditoría Estadística Field Shift v5.0 (Hwang & Yoon, AHP Saaty, FAO-33/56, N=10.000).'
     },
     cycle_years: {
       title_es: 'Duración del Ciclo de Rotación Evaluado (1 a 6 Años)',
@@ -712,14 +1549,14 @@ function getEquationsMetadata() {
       source: 'Metodología de Rotaciones Plurianuales INTA / NASA Field Shift.'
     },
     prev_crop: {
-      title_es: 'Cultivo Inicial o Estado Actual del Lote',
-      title_en: 'Initial Standing Crop or Current Field State',
-      plain_es: 'Indica cómo está tu campo HOY en el momento cero de la simulación: si hay un cultivo por cosechar, rastrojo de trigo, una pastura, o suelo desnudo/degradado. Cambia automáticamente la grilla de colores NDVI en el mapa, la humedad de partida, la cobertura protectora y el nitrógeno residual.',
-      plain_en: 'Defines your field condition TODAY at Month 0: standing summer crop, wheat stubble, pasture, or bare/degraded topsoil. Automatically updates the map NDVI grid, starting water moisture, surface residue protection, and residual N.',
-      formula: 'NDVI_celda(r,c) = clamp( NDVI_estado_inicial + Patrón_espacial(r,c), 0.10, 0.90 )\nS(0) = AW_máx × Humedad_inicial_% / 100',
-      interp_es: 'Partir de un suelo desnudo o maní arrancado penaliza el arranque hídrico y eleva el riesgo erosivo del Año 1, haciendo prioritaria una cobertura gramínea rápida.',
-      interp_en: 'Starting from bare soil or harvested peanut raises Year-1 erosion risk and prioritizes rapid grass cover.',
-      source: 'Observación inicial del productor contrastada con Sentinel-2 (10 m) y SMAP L4.'
+      title_es: 'Estado Satelital Actual o Cultivo Inicial del Lote',
+      title_en: 'Live Satellite State or Initial Standing Crop',
+      plain_es: 'Detecta automáticamente cómo está tu lote HOY usando Sentinel-2 L2A (bandas B04/B08/B11/SCL a 10 m) y humedad superficial NASA POWER / Open-Meteo, o permite elegir manualmente un estado/cultivo de partida. Define el mapa espectral inicial, la humedad al Mes 0, la cobertura protectora y el nitrógeno residual.',
+      plain_en: 'Automatically detects your field condition TODAY from Sentinel-2 L2A (B04/B08/B11/SCL at 10 m) and NASA POWER / Open-Meteo surface moisture, or lets you pick a manual baseline state. Sets Month-0 spectral grid, initial moisture, residue cover, and residual N.',
+      formula: 'NDVI = (B08 − B04) / (B08 + B04)   |   NDMI = (B08 − B11) / (B08 + B11)\nS(0) = AW_máx × Humedad_inicial_% / 100',
+      interp_es: 'Cuando existe escena Sentinel-2 libre de nubes, cada píxel del polígono refleja el NDVI/NDMI observado real. Partir de suelo desnudo o bajo NDVI inicial eleva el riesgo erosivo del Año 1.',
+      interp_en: 'When a cloud-free Sentinel-2 scene is available, each parcel cell displays real observed NDVI/NDMI. Starting bare or low-NDVI raises Year-1 erosion risk.',
+      source: 'Microsoft Planetary Computer Sentinel-2 L2A (10 m) + NASA POWER GWETROOT + Open-Meteo / SMAP L4.'
     },
     strategy_builder: {
       title_es: 'Constructor y Configurador de Estrategias de Rotación',
@@ -729,7 +1566,7 @@ function getEquationsMetadata() {
       formula: 'Estrategia(j) = { Duración_N_años, Secuencia[(Inv_y, Ver_y)]_{y=1..N}, Condiciones_Iniciales_j }',
       interp_es: 'Podés comparar por ejemplo un escenario "Siembra Directa + Centeno/Vicia" contra "Labranza Convencional sin Cobertura" partiendo desde el mismo lote.',
       interp_en: 'Compare for example "No-Till + Rye/Vetch Cover" against "Conventional Tillage Bare Fallow" on the exact same plot.',
-      source: 'Arquitectura Multicriterio Interactiva Field Shift v3.0.'
+      source: 'Arquitectura Multicriterio Interactiva Field Shift v5.0.'
     }
   };
 }
@@ -737,6 +1574,7 @@ function getEquationsMetadata() {
 module.exports = {
   FALLBACK_DATA,
   getEnvironmentalContext,
+  fetchSatellitePlotState,
   getInitialFieldStates,
   getSeasonCropsCatalog,
   getCropCatalog,

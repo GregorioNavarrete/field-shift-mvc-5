@@ -1,5 +1,5 @@
 /* ==========================================================================
-   FIELD SHIFT v4.0 — STATIC EXPLORER & BROWSER BIO-ENGINE (docs/app.js)
+   FIELD SHIFT v5.0 — STATIC EXPLORER & BROWSER BIO-ENGINE (docs/app.js)
    Apache 2.0 · Ports FAO-56, FAO-33, Aptitude Q0.05–Q0.95 & MCDA to Browser
    ========================================================================== */
 'use strict';
@@ -55,7 +55,7 @@ const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 const I18N = {
   es: {
-    top_strip: 'Field Shift v4.0 · Licencia Abierta Apache 2.0 · NASA Space Apps 2026 (Project UNSE) · Explorador interactivo estático para GitHub Pages',
+    top_strip: 'Field Shift v5.0 · Licencia Abierta Apache 2.0 · NASA Space Apps 2026 (Project UNSE) · Explorador interactivo estático para GitHub Pages',
     nav_flow: 'Cómo funciona',
     nav_data: 'Datos y APIs',
     nav_sim: 'Simulador',
@@ -64,8 +64,8 @@ const I18N = {
     btn_dark: 'Oscuro',
     btn_light: 'Claro',
     hero_eyebrow: 'Observación Terrestre + Agronomía · Caja Blanca Apache 2.0',
-    hero_title: 'Cómo funciona Field Shift v4.0 y qué datos satelitales reales procesa',
-    hero_lead: 'Esta página estática explica la arquitectura de Field Shift v4.0 y permite consultar en tiempo real las mismas APIs abiertas que usa el servidor Node.js/Express (NASA POWER, ISRIC SoilGrids v2.0 y Georef AR), calcular ET₀ Penman-Monteith FAO-56 en tu navegador y probar el ranking multicriterio SAW-15 / TOPSIS-15.',
+    hero_title: 'Cómo funciona Field Shift v5.0 y qué datos satelitales reales procesa',
+    hero_lead: 'Esta página estática explica la arquitectura de Field Shift v5.0 y permite consultar en tiempo real las APIs abiertas (NASA POWER clima + GWETROOT, ISRIC SoilGrids 5 profundidades y Georef AR / Nominatim), calcular ET₀ Penman-Monteith FAO-56 en tu navegador y probar el ranking SAW-15 / TOPSIS-15.',
     hero_cta_api: 'Probar APIs en vivo ↓',
     hero_cta_sim: 'Simular escenarios ↓',
     hero_cta_repo: 'Repositorio GitHub ↗',
@@ -96,7 +96,7 @@ const I18N = {
     th_src: 'Fuente / Dataset',
     th_vars: 'Variables Extraídas',
     th_type: 'Naturaleza Epistemológica',
-    th_use: 'Rol en el Motor v4.0',
+    th_use: 'Rol en el Motor v5.0',
     s3_kicker: '3. Laboratorio Interactivo (Mismas Ecuaciones de yieldModel.js y mcdaModel.js)',
     s3_title: 'Probá escenarios climáticos, profundidad de tosca y pesos de decisión',
     s3_sub: 'Este simulador ejecuta en tu navegador el Filtro de Aptitud Q0.05–Q0.95, el balance hídrico mensual en 3 sub-pasos, las penalizaciones FAO-33 (Ky) y la comparación entre SAW-15 y el índice no compensatorio TOPSIS-15 usando el clima y suelo cargados arriba.',
@@ -142,7 +142,7 @@ const I18N = {
     ft_links: 'Fuentes Oficiales'
   },
   en: {
-    top_strip: 'Field Shift v4.0 · Open Source Apache 2.0 · NASA Space Apps 2026 (Project UNSE) · Static GitHub Pages Interactive Explorer',
+    top_strip: 'Field Shift v5.0 · Open Source Apache 2.0 · NASA Space Apps 2026 (Project UNSE) · Static GitHub Pages Interactive Explorer',
     nav_flow: 'How It Works',
     nav_data: 'Data & APIs',
     nav_sim: 'Simulator',
@@ -151,8 +151,8 @@ const I18N = {
     btn_dark: 'Dark',
     btn_light: 'Light',
     hero_eyebrow: 'Earth Observation + Agronomy · White-Box Apache 2.0',
-    hero_title: 'How Field Shift v4.0 works and what open satellite data it processes',
-    hero_lead: 'This static explorer documents the Field Shift v4.0 architecture and queries the same open APIs used by the Node.js/Express backend (NASA POWER, ISRIC SoilGrids v2.0, and Georef AR) directly from your browser—computing FAO-56 Penman-Monteith ET₀ and running SAW-15 / TOPSIS-15 comparisons.',
+    hero_title: 'How Field Shift v5.0 works and what open satellite data it processes',
+    hero_lead: 'This static explorer documents the Field Shift v5.0 architecture and queries open APIs (NASA POWER + GWETROOT, 5-depth ISRIC SoilGrids v2.0, and Georef AR / Nominatim) directly from your browser—computing FAO-56 Penman-Monteith ET₀ and running SAW-15 / TOPSIS-15 comparisons.',
     hero_cta_api: 'Query Live APIs ↓',
     hero_cta_sim: 'Run Simulator ↓',
     hero_cta_repo: 'GitHub Repository ↗',
@@ -183,7 +183,7 @@ const I18N = {
     th_src: 'Source / Dataset',
     th_vars: 'Extracted Variables',
     th_type: 'Epistemological Status',
-    th_use: 'Role in v4.0 Engine',
+    th_use: 'Role in v5.0 Engine',
     s3_kicker: '3. Interactive Lab (Ported from yieldModel.js & mcdaModel.js)',
     s3_title: 'Stress-test climate shocks, hardpan depth, and farmer priority weights',
     s3_sub: 'This client-side simulator executes the Q0.05–Q0.95 Aptitude Filter, 3-substep monthly soil water balance, FAO-33 (Ky) yield penalties, and SAW-15 vs. non-compensatory TOPSIS-15 scoring on the climate & soil data loaded above.',
@@ -271,10 +271,19 @@ const WORKFLOW_STEPS = {
 
 const NDVI_STATES = {
   soja_1ra: { base: 0.68, pat: 'headland_stress', note_es: 'Patrón: cabeceras compactadas (borde -0.18) y centro vigoroso.', note_en: 'Pattern: compacted headlands (-0.18 edge) with vigorous interior.' },
-  barbecho_desnudo: { base: 0.13, pat: 'low_bare', note_es: 'Patrón: suelo desnudo expuesto (<0.20) con alto riesgo erosivo.', note_en: 'Pattern: bare exposed soil (<0.20) with high erosion exposure.' },
-  pastura_alfalfa: { base: 0.82, pat: 'uniform', note_es: 'Patrón: cobertura perenne densa y uniforme en todo el lote.', note_en: 'Pattern: dense, uniform perennial canopy across the plot.' },
+  soja_2da: { base: 0.62, pat: 'headland_stress', note_es: 'Doble cultivo sobre trigo; menor humedad de arranque (-8%).', note_en: 'Double crop over wheat stubble; lower initial profile moisture.' },
+  maiz_temprano: { base: 0.72, pat: 'headland_stress', note_es: 'Gramínea de alto volumen de rastrojo C4 (C:N 55:1) y fuerte extracción.', note_en: 'High-biomass C4 grass leaving persistent stubble (C:N 55:1).' },
+  maiz_tardio: { base: 0.66, pat: 'headland_stress', note_es: 'Maíz sembrado en diciembre esquivando golpe térmico de enero.', note_en: 'Late-planted maize shifting flowering away from Jan heat waves.' },
+  sorgo_granifero: { base: 0.64, pat: 'uniform', note_es: 'Alta tolerancia térmica y rastrojo fibroso de lenta descomposición.', note_en: 'High heat resilience and durable fibrous residue cover.' },
+  girasol: { base: 0.60, pat: 'uniform', note_es: 'Raíz pivotante profunda; deja baja cobertura tras cosecha.', note_en: 'Deep taproot; leaves sparse protective residue after harvest.' },
   mani: { base: 0.24, pat: 'low_bare', note_es: 'Patrón: suelo removido post-arrancado; requiere cobertura inmediata.', note_en: 'Pattern: disturbed soil post-digging; urgent winter cover needed.' },
-  campo_natural: { base: 0.60, pat: 'wet_lowland', note_es: 'Patrón: gradiente micro-topográfico de loma a bajo húmedo.', note_en: 'Pattern: natural topographic gradient from upland to wet lowland.' }
+  rastrojo_trigo: { base: 0.28, pat: 'uniform', note_es: '85% cobertura muerta protegiendo humedad contra evaporación.', note_en: '85% dense surface stubble shielding topsoil moisture.' },
+  pastura_alfalfa: { base: 0.82, pat: 'uniform', note_es: 'Patrón: cobertura perenne densa y uniforme en todo el lote.', note_en: 'Pattern: dense, uniform perennial canopy across the plot.' },
+  campo_natural: { base: 0.60, pat: 'wet_lowland', note_es: 'Patrón: gradiente micro-topográfico de loma a bajo húmedo.', note_en: 'Pattern: natural topographic gradient from upland to wet lowland.' },
+  cobertura_vicia_centeno: { base: 0.74, pat: 'uniform', note_es: 'Fijación biológica + supresión de malezas previa a siembra estival.', note_en: 'Biological N fixation + active weed suppression before summer planting.' },
+  barbecho_quimico: { base: 0.19, pat: 'low_bare', note_es: 'Sin raíces vivas consumiendo agua; riesgo moderado de lixiviación.', note_en: 'No active roots; moderate nitrate leaching risk.' },
+  barbecho_desnudo: { base: 0.13, pat: 'low_bare', note_es: 'Patrón: suelo desnudo expuesto (<0.20) con alto riesgo erosivo.', note_en: 'Pattern: bare exposed soil (<0.20) with high erosion exposure.' },
+  degradado_compactado: { base: 0.14, pat: 'low_bare', note_es: 'Pérdida de estructura superficial y encostramiento tras labranza.', note_en: 'Topsoil crusting and low infiltration after heavy tillage.' }
 };
 
 const EPIST_DATA = [
@@ -465,13 +474,20 @@ async function fetchLiveApis() {
   btn.disabled = true;
 
   const powerUrl = `https://power.larc.nasa.gov/api/temporal/climatology/point?parameters=T2M,T2M_MAX,T2M_MIN,PRECTOTCORR,RH2M,WS2M,ALLSKY_SFC_SW_DWN&community=AG&longitude=${lon}&latitude=${lat}&format=JSON`;
-  const soilUrl = `https://rest.isric.org/soilgrids/v2.0/properties/query?lon=${lon}&lat=${lat}&property=soc&property=wv0033&property=wv1500&property=sand&property=silt&property=clay&depth=0-30cm&value=mean&value=Q0.05&value=Q0.95`;
+  const soilUrl = `https://rest.isric.org/soilgrids/v2.0/properties/query?lon=${lon}&lat=${lat}&property=soc&property=wv0033&property=wv1500&property=sand&property=silt&property=clay&depth=0-5cm&depth=5-15cm&depth=15-30cm&depth=30-60cm&depth=60-100cm&value=mean&value=Q0.05&value=Q0.95`;
   const georefUrl = `https://apis.datos.gob.ar/georef/api/ubicacion?lat=${lat}&lon=${lon}`;
+  const endDt = new Date(Date.now() - 2 * 86400000);
+  const startDt = new Date(endDt.getTime() - 32 * 86400000);
+  const ymd = (d) => d.toISOString().slice(0, 10).replace(/-/g, '');
+  const recentUrl = `https://power.larc.nasa.gov/api/temporal/daily/point?parameters=GWETROOT&community=AG&longitude=${lon}&latitude=${lat}&start=${ymd(startDt)}&end=${ymd(endDt)}&format=JSON`;
+  const meteoUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=soil_moisture_28_to_100cm`;
 
-  const [pRes, sRes, gRes] = await Promise.allSettled([
+  const [pRes, sRes, gRes, rRes, mRes] = await Promise.allSettled([
     fetchWithTimeout(powerUrl, 8000),
-    fetchWithTimeout(soilUrl, 8000),
-    fetchWithTimeout(georefUrl, 4500)
+    fetchWithTimeout(soilUrl, 8500),
+    fetchWithTimeout(georefUrl, 4500),
+    fetchWithTimeout(recentUrl, 6000),
+    fetchWithTimeout(meteoUrl, 5000)
   ]);
 
   let liveCount = 0;
@@ -507,22 +523,45 @@ async function fetchLiveApis() {
     };
   }
 
+  let liveMoistPct = 62;
+  if (rRes.status === 'fulfilled' && rRes.value?.properties?.parameter?.GWETROOT) {
+    const vals = Object.values(rRes.value.properties.parameter.GWETROOT).filter((v) => Number.isFinite(v) && v >= 0 && v <= 1);
+    if (vals.length) liveMoistPct = Math.round(vals[vals.length - 1] * 100);
+  } else if (mRes.status === 'fulfilled' && Number.isFinite(mRes.value?.current?.soil_moisture_28_to_100cm)) {
+    liveMoistPct = Math.round(clamp((mRes.value.current.soil_moisture_28_to_100cm / 0.45) * 100, 10, 98));
+  }
+
   if (sRes.status === 'fulfilled' && sRes.value?.properties?.layers) {
     const layers = sRes.value.properties.layers;
-    const getL = (name) => layers.find((l) => l.name === name)?.depths?.[0]?.values || {};
-    const fc = getL('wv0033');
-    const wp = getL('wv1500');
-    const soc = getL('soc');
-    const sand = getL('sand');
-    const silt = getL('silt');
-    const clay = getL('clay');
+    const weights = { '0-5cm': 5, '5-15cm': 10, '15-30cm': 15, '30-60cm': 30, '60-100cm': 40 };
+    const integ = (name) => {
+      const depths = layers.find((l) => l.name === name)?.depths || [];
+      let wSum = 0; const acc = { mean: 0, 'Q0.05': 0, 'Q0.95': 0 };
+      depths.forEach((d) => {
+        const w = weights[d.label] || 0;
+        if (w > 0 && Number.isFinite(d.values?.mean)) {
+          wSum += w;
+          acc.mean += d.values.mean * w;
+          acc['Q0.05'] += (d.values['Q0.05'] ?? d.values.mean * 0.75) * w;
+          acc['Q0.95'] += (d.values['Q0.95'] ?? d.values.mean * 1.25) * w;
+        }
+      });
+      if (!wSum) return depths[0]?.values || {};
+      return { mean: acc.mean / wSum, 'Q0.05': acc['Q0.05'] / wSum, 'Q0.95': acc['Q0.95'] / wSum };
+    };
+    const fc = integ('wv0033');
+    const wp = integ('wv1500');
+    const soc = integ('soc');
+    const sand = integ('sand');
+    const silt = integ('silt');
+    const clay = integ('clay');
     if (fc.mean && wp.mean) {
       liveCount++;
       STATE.rawSoil = sRes.value;
       STATE.env.suelo = {
         modo: 'live_api',
-        fuente: 'ISRIC SoilGrids v2.0 REST API (250 m, en vivo)',
-        taxonomia: 'Perfil geolocalizado ISRIC 0–30 cm',
+        fuente: 'ISRIC SoilGrids v2.0 (250 m · perfil 0–100 cm en 5 capas)',
+        taxonomia: 'Perfil integrado ISRIC 0–100 cm',
         textura: `Arena ${Math.round((sand.mean || 500) / 10)}% · Limo ${Math.round((silt.mean || 300) / 10)}% · Arcilla ${Math.round((clay.mean || 200) / 10)}%`,
         soc_g_kg: {
           media: Number(((soc.mean || 184) / 10).toFixed(1)),
@@ -534,9 +573,11 @@ async function fetchLiveApis() {
           q05: Math.max(40, Math.round((fc['Q0.05'] || fc.mean * 0.75) - (wp['Q0.05'] || wp.mean * 0.75))),
           q95: Math.max(70, Math.round((fc['Q0.95'] || fc.mean * 1.25) - (wp['Q0.95'] || wp.mean * 1.25)))
         },
-        humedad_smap_inicial_pct: 62
+        humedad_smap_inicial_pct: liveMoistPct
       };
     }
+  } else {
+    STATE.env.suelo.humedad_smap_inicial_pct = liveMoistPct;
   }
 
   if (gRes.status === 'fulfilled' && gRes.value?.ubicacion?.provincia?.nombre) {
@@ -546,10 +587,14 @@ async function fetchLiveApis() {
       etiqueta: `${u.departamento ? u.departamento.nombre : 'Zona Rural'}, ${u.provincia.nombre}`
     };
   } else {
-    STATE.env.georef = {
-      modo: 'coord_global',
-      etiqueta: `${lat.toFixed(2)}°, ${lon.toFixed(2)}°`
-    };
+    try {
+      const nom = await fetchWithTimeout(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=jsonv2&zoom=10&accept-language=es`, 3500);
+      const a = nom?.address || {};
+      const lbl = [a.county || a.city || a.town || a.village, a.state, a.country].filter(Boolean).slice(0, 2).join(', ');
+      STATE.env.georef = { modo: lbl ? 'nominatim' : 'coord_global', etiqueta: lbl || `${Math.abs(lat).toFixed(2)}° ${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(2)}° ${lon >= 0 ? 'E' : 'O'}` };
+    } catch (_) {
+      STATE.env.georef = { modo: 'coord_global', etiqueta: `${Math.abs(lat).toFixed(2)}° ${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lon).toFixed(2)}° ${lon >= 0 ? 'E' : 'O'}` };
+    }
   }
 
   btn.disabled = false;
@@ -915,15 +960,27 @@ function drawClimateChart() {
     const h = canvas.height = 250;
     ctx.clearRect(0, 0, w, h);
     const maxV = Math.max(...rain, ...et0, 150);
+    const stepX = (w - 40) / 12;
     rain.forEach((v, i) => {
-      const x = 24 + i * ((w - 40) / 12);
+      const x = 24 + i * stepX;
       const bh = (v / maxV) * (h - 50);
-      ctx.fillStyle = '#07503f';
+      ctx.fillStyle = '#588157';
       ctx.fillRect(x, h - 28 - bh, 14, bh);
       ctx.fillStyle = tickColor;
       ctx.font = '10px sans-serif';
       ctx.fillText(labels[i], x, h - 10);
     });
+    // Curva naranja ET0 FAO-56 sobre las barras
+    ctx.strokeStyle = '#d97706';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    et0.forEach((eVal, i) => {
+      const ex = 24 + i * stepX + 7;
+      const ey = h - 28 - (eVal / maxV) * (h - 50);
+      if (i === 0) ctx.moveTo(ex, ey);
+      else ctx.lineTo(ex, ey);
+    });
+    ctx.stroke();
     return;
   }
 
@@ -1022,18 +1079,30 @@ function toggleLang() {
   applyTranslations();
 }
 
-function toggleTheme() {
-  STATE.theme = STATE.theme === 'light' ? 'dark' : 'light';
+function applyDocsTheme(theme) {
+  STATE.theme = theme === 'dark' ? 'dark' : 'light';
   document.documentElement.setAttribute('data-theme', STATE.theme);
+  try { localStorage.setItem('fs_docs_theme', STATE.theme); } catch (_) {}
   const btn = document.getElementById('themeBtn');
-  btn.innerHTML = STATE.theme === 'dark'
-    ? `☀️ <span>${I18N[STATE.lang].btn_light}</span>`
-    : `🌙 <span>${I18N[STATE.lang].btn_dark}</span>`;
+  if (btn) {
+    btn.innerHTML = STATE.theme === 'dark'
+      ? `☀️ <span>${I18N[STATE.lang].btn_light}</span>`
+      : `🌙 <span>${I18N[STATE.lang].btn_dark}</span>`;
+  }
+}
+
+function toggleTheme() {
+  applyDocsTheme(STATE.theme === 'light' ? 'dark' : 'light');
   drawClimateChart();
   runBrowserSimulation();
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+  try {
+    const saved = localStorage.getItem('fs_docs_theme');
+    if (saved) STATE.theme = saved === 'dark' ? 'dark' : 'light';
+  } catch (_) {}
+  applyDocsTheme(STATE.theme);
   renderCropTable();
   applyTranslations();
 });

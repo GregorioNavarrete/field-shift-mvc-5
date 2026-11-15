@@ -1,6 +1,6 @@
 /**
  * @file server.js
- * @description Punto de entrada del servidor Express para Field Shift v2.0 (Arquitectura MVC).
+ * @description Punto de entrada del servidor Express para Field Shift v5.0 (Arquitectura MVC).
  * Configura middlewares de compresión, CORS, parseo JSON, motor de plantillas EJS,
  * archivos estáticos y rutas de la aplicación.
  */
@@ -43,6 +43,6 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`\n🌱 Field Shift v2.0 (MVC) ejecutándose en http://localhost:${PORT}`);
-  console.log(`📡 Endpoints activos: GET / | POST /api/analyze | GET /api/equations\n`);
+  console.log(`\n🌱 Field Shift v5.0 (MVC) ejecutándose en http://localhost:${PORT}`);
+  console.log(`📡 Endpoints activos: GET / | POST /api/satellite | POST /api/analyze | GET /api/equations\n`);
 });
