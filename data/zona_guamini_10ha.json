@@ -1,0 +1,41 @@
+{
+  "meta": {
+    "zona": "Partido de Guaminí, Buenos Aires (Pampa Arenosa · EEA INTA Bordenave)",
+    "coordenadas": { "lat": -36.80550642177033, "lon": -62.026496180462615 },
+    "poligono_default": [
+      [-36.804381, -62.028740],
+      [-36.804381, -62.024252],
+      [-36.806631, -62.024252],
+      [-36.806631, -62.028740]
+    ],
+    "area_m2": 100000,
+    "area_ha": 10.0,
+    "ciclo": { "inicio": "2026-02-15", "fin": "2028-02-15", "dias": 730 }
+  },
+  "clima_mensual_guamini": {
+    "fuente": "NASA POWER (community=AG) calibrado con estación INTA SIGA EEA Bordenave",
+    "precipitacion_mm": [95, 86, 98, 72, 44, 28, 26, 32, 54, 84, 94, 99],
+    "et0_calibrada_mm": [148, 122, 98, 66, 44, 32, 35, 50, 74, 102, 128, 146],
+    "temp_media_c": [22.8, 21.6, 18.9, 14.8, 11.2, 8.1, 7.6, 9.5, 12.1, 15.4, 18.8, 21.5],
+    "dias_calor_35c": 14,
+    "dias_helada_0c": 26
+  },
+  "suelo_guamini": {
+    "fuente": "ISRIC SoilGrids v2.0 (250 m) + Cartas GeoINTA WFS",
+    "taxonomia": "Hapludol típico / éntico",
+    "textura": "Franco-arenosa (56% arena, 26% limo, 18% arcilla)",
+    "soc_g_kg": { "media": 18.4, "q05": 12.1, "q95": 25.8 },
+    "aw_mm_m": { "media": 130, "q05": 84.3, "q95": 175.7 },
+    "humedad_smap_inicial_pct": 62
+  },
+  "estadisticas_magyp": {
+    "fuente": "MAGyP / INDEC Estimaciones Agrícolas (Serie 10 años Partido de Guaminí)",
+    "cultivos": [
+      { "nombre": "Maíz", "rinde_kg_ha": 6900, "desvio_kg_ha": 1850, "cv_pct": 26.8 },
+      { "nombre": "Trigo pan", "rinde_kg_ha": 3250, "desvio_kg_ha": 680, "cv_pct": 20.9 },
+      { "nombre": "Soja 1ra", "rinde_kg_ha": 2650, "desvio_kg_ha": 610, "cv_pct": 23.0 },
+      { "nombre": "Soja 2da", "rinde_kg_ha": 1750, "desvio_kg_ha": 590, "cv_pct": 33.7 },
+      { "nombre": "Sorgo granífero", "rinde_kg_ha": 5400, "desvio_kg_ha": 920, "cv_pct": 17.0 }
+    ]
+  }
+}

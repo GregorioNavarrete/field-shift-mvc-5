@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Field Shift v4.0 — Explorador Técnico y de Datos Abiertos (Apache 2.0)</title>
+  <meta name="description" content="Single-page interactive technical explorer for Field Shift v4.0: NASA POWER, ISRIC SoilGrids v2.0, Penman-Monteith FAO-56, FAO-33 yield response, and SAW-15/TOPSIS-15 crop rotation decision support." />
+  <meta name="license" content="Apache-2.0" />
+  <meta name="si-disclosure" content="Language-model assistance (Super Intelligence) was used to accelerate code structuring and documentation drafting under student supervision; all scientific choices, parameters, and validation remain human-verified." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+
+  <div class="top-strip" id="topStrip" data-i18n="top_strip">
+    Field Shift v4.0 · Licencia Abierta Apache 2.0 · NASA Space Apps 2026 (Project UNSE) · Explorador interactivo estático para GitHub Pages
+  </div>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="#top" class="brand">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 20L12 3L20 20H4Z" fill="#e8fe85"/>
+          <path d="M12 3V20" stroke="#07503f" stroke-width="1.8"/>
+        </svg>
+        <span>field shift</span>
+        <span class="brand-sub">v4.0 Open Explorer</span>
+      </a>
+
+      <nav class="nav-links" aria-label="Secciones">
+        <a href="#workflow" data-i18n="nav_flow">Cómo funciona</a>
+        <a href="#data-live" data-i18n="nav_data">Datos y APIs</a>
+        <a href="#simulator" data-i18n="nav_sim">Simulador</a>
+        <a href="#criteria" data-i18n="nav_crit">15 Criterios</a>
+        <a href="#architecture" data-i18n="nav_arch">Código Abierto</a>
+      </nav>
+
+      <div class="header-controls">
+        <button type="button" class="btn-pill btn-outline-light btn-sm" id="themeBtn" onclick="toggleTheme()">🌙 <span data-i18n="btn_dark">Oscuro</span></button>
+        <button type="button" class="btn-pill btn-lime btn-sm" id="langBtn" onclick="toggleLang()">ES | EN</button>
+      </div>
+    </div>
+  </header>
+
+  <section class="hero" id="top">
+    <div class="hero-grid">
+      <div>
+        <span class="hero-eyebrow" data-i18n="hero_eyebrow">Observación Terrestre + Agronomía · Caja Blanca Apache 2.0</span>
+        <h1 data-i18n="hero_title">Cómo funciona Field Shift v4.0 y qué datos satelitales reales procesa</h1>
+        <p class="hero-lead" data-i18n="hero_lead">
+          Esta página estática explica la arquitectura de Field Shift v4.0 y permite consultar en tiempo real las mismas APIs abiertas que usa el servidor Node.js/Express (NASA POWER, ISRIC SoilGrids v2.0 y Georef AR), calcular ET₀ Penman-Monteith FAO-56 en tu navegador y probar el ranking multicriterio SAW-15 / TOPSIS-15.
+        </p>
+        <div class="hero-actions">
+          <a href="#data-live" class="btn-pill btn-lime" data-i18n="hero_cta_api">Probar APIs en vivo ↓</a>
+          <a href="#simulator" class="btn-pill btn-outline-light" data-i18n="hero_cta_sim">Simular escenarios ↓</a>
+          <a href="https://github.com/GregorioNavarrete" target="_blank" rel="noopener" class="btn-pill btn-outline-light" data-i18n="hero_cta_repo">Repositorio GitHub ↗</a>
+        </div>
+      </div>
+
+      <div class="hero-panel">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong style="font-size:13px; color:#e8fe85;" data-i18n="hero_panel_title">Motor Científico en 3 Etapas</strong>
+          <span class="badge badge-live">Apache 2.0</span>
+        </div>
+        <div class="hero-stat-grid">
+          <div class="hero-stat">
+            <strong>1–6 años</strong>
+            <span data-i18n="hs_1">Horizonte configurable (12–72 meses)</span>
+          </div>
+          <div class="hero-stat">
+            <strong>15</strong>
+            <span data-i18n="hs_2">Criterios (C1, C7, C9 vía FAO-56/33)</span>
+          </div>
+          <div class="hero-stat">
+            <strong>14 + 21</strong>
+            <span data-i18n="hs_3">Estados iniciales y cultivos Inv/Ver</span>
+          </div>
+          <div class="hero-stat">
+            <strong>Q0.05–Q0.95</strong>
+            <span data-i18n="hs_4">Filtro no compensatorio + IC 90%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECCIÓN 1: CÓMO FUNCIONA (4 PASOS + GRILLA NDVI) -->
+  <section class="section" id="workflow">
+    <div class="container">
+      <span class="section-kicker" data-i18n="s1_kicker">1. Flujo de la Aplicación MVC</span>
+      <h2 class="section-title" data-i18n="s1_title">¿Cómo transforma Field Shift un clic en el mapa en un ranking explicable?</h2>
+      <p class="section-sub" data-i18n="s1_sub">
+        La aplicación completa en Express/EJS guía al productor o asesor en 4 pasos secuenciales con mini-tutoriales animados. Explorá cada etapa abajo:
+      </p>
+
+      <div class="step-tabs" role="tablist">
+        <button type="button" class="step-tab active" onclick="selectWorkflowStep(1)" id="wTab1" data-i18n="wt_1">Paso 1 · Lote y Grilla NDVI</button>
+        <button type="button" class="step-tab" onclick="selectWorkflowStep(2)" id="wTab2" data-i18n="wt_2">Paso 2 · Suelo y Estrategias</button>
+        <button type="button" class="step-tab" onclick="selectWorkflowStep(3)" id="wTab3" data-i18n="wt_3">Paso 3 · Balance FAO-56 Mes a Mes</button>
+        <button type="button" class="step-tab" onclick="selectWorkflowStep(4)" id="wTab4" data-i18n="wt_4">Paso 4 · Auditoría SAW-15 / TOPSIS-15</button>
+      </div>
+
+      <div class="grid-2">
+        <div class="card" id="workflowDetailCard"></div>
+
+        <div class="card card-sage">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+            <strong style="font-size:13.5px;" data-i18n="ndvi_demo_title">Vista previa de Grilla NDVI (7×6 celdas · Paso 1)</strong>
+            <select id="ndviStateSelect" class="form-control" style="padding:5px 10px; font-size:12px;" onchange="renderNdviPreview()">
+              <option value="soja_1ra">Soja de 1ra (NDVI 0.68 · cabeceras estresadas)</option>
+              <option value="barbecho_desnudo">Barbecho desnudo (NDVI 0.13 · alerta erosión)</option>
+              <option value="pastura_alfalfa">Pastura Alfalfa + Festuca (NDVI 0.82)</option>
+              <option value="mani">Maní arrancado (NDVI 0.24 · suelo removido)</option>
+              <option value="campo_natural">Campo natural (NDVI 0.60 · gradiente loma-bajo)</option>
+            </select>
+          </div>
+          <p class="muted" style="margin-top:6px;" id="ndviStateNote"></p>
+          <div class="ndvi-grid-box" id="ndviGridPreview"></div>
+          <p class="muted" style="margin-top:10px; font-size:11.5px;" data-i18n="ndvi_epist">
+            Nota metodológica: la grilla interna de 42 celdas aplica patrones espaciales paramétricos (computeCellNdvi) anclados al estado inicial elegido y rangos Sentinel-2, sin sustituir imágenes multiespectrales de campo.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECCIÓN 2: DATOS QUE USA + INSPECTOR EN VIVO -->
+  <section class="section section-alt" id="data-live">
+    <div class="container">
+      <span class="section-kicker" data-i18n="s2_kicker">2. Fuentes Abiertas y Trazabilidad</span>
+      <h2 class="section-title" data-i18n="s2_title">Los datos exactos que usa Field Shift (consulta en vivo desde tu navegador)</h2>
+      <p class="section-sub" data-i18n="s2_sub">
+        Las tres APIs abiertas principales (NASA POWER, ISRIC SoilGrids v2.0 y Georef AR) permiten consultas directas por CORS. Elegí una coordenada para traer datos reales o cargá el respaldo offline de Guaminí (EEA INTA Bordenave).
+      </p>
+
+      <div class="card" style="margin-bottom:20px;">
+        <div class="api-bar">
+          <div class="field-group">
+            <label for="presetSiteSelect" data-i18n="lbl_preset">Sitio de prueba</label>
+            <select id="presetSiteSelect" class="form-control" onchange="onSitePresetChange()">
+              <option value="-36.805506,-62.026496">Guaminí, Buenos Aires (Demo Base)</option>
+              <option value="-27.7883,-64.2600">Santiago del Estero / UNSE (NOA)</option>
+              <option value="-33.8900,-60.5736">Pergamino, Buenos Aires (Pampa Ondulada)</option>
+              <option value="41.9778,-93.6417">Ames, Iowa, USA (Corn Belt)</option>
+            </select>
+          </div>
+          <div class="field-group">
+            <label for="latInput" data-i18n="lbl_lat">Latitud</label>
+            <input type="number" step="0.0001" id="latInput" class="form-control" value="-36.8055" style="width:130px;" />
+          </div>
+          <div class="field-group">
+            <label for="lonInput" data-i18n="lbl_lon">Longitud</label>
+            <input type="number" step="0.0001" id="lonInput" class="form-control" value="-62.0265" style="width:130px;" />
+          </div>
+          <button type="button" class="btn-pill btn-forest" onclick="fetchLiveApis()" id="fetchBtn" data-i18n="btn_fetch">
+            📡 Consultar NASA POWER + SoilGrids en vivo
+          </button>
+          <button type="button" class="btn-pill btn-outline" onclick="loadOfflineFallback()" data-i18n="btn_fallback">
+            Usar Respaldo Guaminí JSON
+          </button>
+          <span class="badge badge-mid" id="apiStatusBadge">Respaldo Offline Guaminí</span>
+        </div>
+
+        <div class="grid-4" style="margin-bottom:18px;">
+          <div class="card card-sage">
+            <span class="badge badge-live">NASA POWER (AG)</span>
+            <div class="big-metric" id="kpiRain">—</div>
+            <div class="muted" id="kpiEt0">ET₀ Penman-Monteith: —</div>
+          </div>
+          <div class="card card-sky">
+            <span class="badge badge-live">SoilGrids v2.0 (250m)</span>
+            <div class="big-metric" id="kpiAw">—</div>
+            <div class="muted" id="kpiAwRange">Q0.05–Q0.95: —</div>
+          </div>
+          <div class="card card-peach">
+            <span class="badge badge-mid">SOC &amp; Textura (0–30 cm)</span>
+            <div class="big-metric" id="kpiSoc">—</div>
+            <div class="muted" id="kpiTexture">—</div>
+          </div>
+          <div class="card">
+            <span class="badge badge-live">Territorio / Georef</span>
+            <div class="big-metric" id="kpiPlace" style="font-size:21px;">—</div>
+            <div class="muted" id="kpiCoords">—</div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <strong style="font-size:13.5px;" data-i18n="chart_clima_title">Precipitación mensual vs. ET₀ Penman-Monteith FAO-56 (mm/mes)</strong>
+            <div class="chart-box" style="margin-top:10px;">
+              <canvas id="climateChart"></canvas>
+            </div>
+          </div>
+
+          <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:6px;">
+              <strong style="font-size:13.5px;" data-i18n="json_title">Payload JSON real recibido y transformado</strong>
+              <select id="jsonTabSelect" class="form-control" style="padding:4px 8px; font-size:11.5px;" onchange="renderJsonPreview()">
+                <option value="transformed">Contexto Ambiental Transformado</option>
+                <option value="power">Respuesta Cruda NASA POWER</option>
+                <option value="soil">Respuesta Cruda SoilGrids v2.0</option>
+              </select>
+            </div>
+            <pre class="json-box" id="jsonPreviewBox"></pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- TABLA EPISTEMOLÓGICA -->
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th data-i18n="th_src">Fuente / Dataset</th>
+              <th data-i18n="th_vars">Variables Extraídas</th>
+              <th data-i18n="th_type">Naturaleza Epistemológica</th>
+              <th data-i18n="th_use">Rol en el Motor v4.0</th>
+            </tr>
+          </thead>
+          <tbody id="epistTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECCIÓN 3: SIMULADOR INTERACTIVO EN NAVEGADOR -->
+  <section class="section" id="simulator">
+    <div class="container">
+      <span class="section-kicker" data-i18n="s3_kicker">3. Laboratorio Interactivo (Mismas Ecuaciones de yieldModel.js y mcdaModel.js)</span>
+      <h2 class="section-title" data-i18n="s3_title">Probá escenarios climáticos, profundidad de tosca y pesos de decisión</h2>
+      <p class="section-sub" data-i18n="s3_sub">
+        Este simulador ejecuta en tu navegador el Filtro de Aptitud Q0.05–Q0.95, el balance hídrico mensual en 3 sub-pasos, las penalizaciones FAO-33 (Ky) y la comparación entre SAW-15 y el índice no compensatorio TOPSIS-15 usando el clima y suelo cargados arriba.
+      </p>
+
+      <div class="card card-sage" style="margin-bottom:18px;">
+        <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; align-items:center; justify-content:space-between;">
+          <div style="display:flex; flex-wrap:wrap; gap:8px;">
+            <button type="button" class="btn-pill btn-forest btn-sm" onclick="applySimPreset('normal')" id="simPreNormal" data-i18n="pre_norm">Clima Normal</button>
+            <button type="button" class="btn-pill btn-outline btn-sm" onclick="applySimPreset('nina')" id="simPreNina" data-i18n="pre_nina">Sequía La Niña (-30% · +2°C)</button>
+            <button type="button" class="btn-pill btn-outline btn-sm" onclick="applySimPreset('nino')" id="simPreNino" data-i18n="pre_nino">El Niño (+30% lluvia)</button>
+            <button type="button" class="btn-pill btn-outline btn-sm" onclick="applySimPreset('crisis')" id="simPreCrisis" data-i18n="pre_crisis">Crisis Económica</button>
+          </div>
+          <div class="field-group" style="flex-direction:row; align-items:center; gap:8px;">
+            <label for="simTosca" style="color:var(--charcoal);" data-i18n="lbl_tosca">Profundidad útil (tosca):</label>
+            <select id="simTosca" class="form-control" onchange="runBrowserSimulation()">
+              <option value="100">Sin limitante (&gt; 100 cm)</option>
+              <option value="75">Tosca moderada (75 cm)</option>
+              <option value="50">Tosca somera (50 cm)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid-4">
+          <div class="slider-box">
+            <div class="slider-head"><span data-i18n="sl_rain">Lluvia (Δ%)</span><strong id="simRainLbl">0%</strong></div>
+            <input type="range" id="simRain" min="-30" max="30" step="5" value="0" oninput="runBrowserSimulation()" />
+          </div>
+          <div class="slider-box">
+            <div class="slider-head"><span data-i18n="sl_temp">Temperatura (+°C)</span><strong id="simTempLbl">+0.0 °C</strong></div>
+            <input type="range" id="simTemp" min="0" max="3" step="0.5" value="0" oninput="runBrowserSimulation()" />
+          </div>
+          <div class="slider-box">
+            <div class="slider-head"><span data-i18n="sl_water">Peso Agua</span><strong id="simWaterLbl">30%</strong></div>
+            <input type="range" id="simWater" min="10" max="60" step="5" value="30" oninput="runBrowserSimulation()" />
+          </div>
+          <div class="slider-box">
+            <div class="slider-head"><span data-i18n="sl_econ">Peso Economía</span><strong id="simEconLbl">20%</strong></div>
+            <input type="range" id="simEcon" min="5" max="60" step="5" value="20" oninput="runBrowserSimulation()" />
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-3" id="simPodiumGrid" style="margin-bottom:18px;"></div>
+
+      <div class="grid-2">
+        <div class="card">
+          <strong style="font-size:13.5px;" data-i18n="chart_rank_title">Comparación SAW-15 vs. TOPSIS-15 (No Compensatorio)</strong>
+          <div class="chart-box" style="margin-top:10px;">
+            <canvas id="rankingChart"></canvas>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th data-i18n="th_strat">Estrategia (2 años)</th>
+                <th data-i18n="th_apt">Aptitud</th>
+                <th>C1 (ETa)</th>
+                <th>C7 (T°)</th>
+                <th>C9 (WUE)</th>
+                <th>SAW-15</th>
+                <th>TOPSIS-15</th>
+              </tr>
+            </thead>
+            <tbody id="simTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECCIÓN 4: LOS 15 CRITERIOS Y CATÁLOGO DE CULTIVOS -->
+  <section class="section section-alt" id="criteria">
+    <div class="container">
+      <span class="section-kicker" data-i18n="s4_kicker">4. Auditoría Transparente</span>
+      <h2 class="section-title" data-i18n="s4_title">Los 15 criterios (C1–C15) y parámetros de cultivo FAO-33</h2>
+      <p class="section-sub" data-i18n="s4_sub">
+        Cada criterio normaliza variables físicas en una escala de 0 a 100. Los marcados con la etiqueta FAO-33 se calculan dinámicamente a partir del balance hídrico real y extremos térmicos; los restantes combinan tasas agronómicas parametrizadas.
+      </p>
+
+      <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px;">
+        <button type="button" class="step-tab active" onclick="filterCriteria('all', this)" data-i18n="flt_all">Todos (15)</button>
+        <button type="button" class="step-tab" onclick="filterCriteria('water', this)" data-i18n="flt_water">Agua y Clima</button>
+        <button type="button" class="step-tab" onclick="filterCriteria('soil', this)" data-i18n="flt_soil">Suelo y Cobertura</button>
+        <button type="button" class="step-tab" onclick="filterCriteria('bio', this)" data-i18n="flt_bio">Biología y GEI</button>
+        <button type="button" class="step-tab" onclick="filterCriteria('econ', this)" data-i18n="flt_econ">Economía y Riesgo</button>
+      </div>
+
+      <div class="grid-3" id="criteriaGrid" style="margin-bottom:24px;"></div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th data-i18n="th_crop">Cultivo</th>
+              <th>Ky (FAO-33)</th>
+              <th data-i18n="th_hi">Índice Cosecha (HI)</th>
+              <th data-i18n="th_minaw">AW mín. (mm)</th>
+              <th data-i18n="th_mintosca">Tosca mín. (cm)</th>
+              <th data-i18n="th_ypot">Ypot base (kg/ha)</th>
+            </tr>
+          </thead>
+          <tbody id="cropParamsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECCIÓN 5: CÓDIGO ABIERTO, ARQUITECTURA Y DESPLIEGUE -->
+  <section class="section" id="architecture">
+    <div class="container">
+      <span class="section-kicker" data-i18n="s5_kicker">5. Arquitectura Abierta (Apache 2.0)</span>
+      <h2 class="section-title" data-i18n="s5_title">Estructura MVC, endpoints REST y cómo desplegarlo</h2>
+      <p class="section-sub" data-i18n="s5_sub">
+        El proyecto completo corre en Node.js + Express sin base de datos externa ni claves API obligatorias, y separa limpiamente conectores de datos, física de cultivos, análisis multicriterio y vistas.
+      </p>
+
+      <div class="arch-flow">
+        <div class="arch-node">
+          <span class="badge badge-live">1. Router &amp; Controller</span>
+          <p class="muted" style="margin-top:8px;" data-i18n="arch_1">Orquesta la carga inicial SSR (GET /), metadatos (GET /api/equations) y recálculos dinámicos (POST /api/analyze).</p>
+          <code>routes/indexRoutes.js</code>
+          <code>controllers/fieldShiftController.js</code>
+        </div>
+        <div class="arch-node">
+          <span class="badge badge-live">2. Data Connectors</span>
+          <p class="muted" style="margin-top:8px;" data-i18n="arch_2">Consulta en paralelo NASA POWER (climatología + serie diaria), SoilGrids v2.0 y Georef AR con caché TTL y fallback JSON.</p>
+          <code>models/agroModel.js</code>
+          <code>data/zona_guamini_10ha.json</code>
+        </div>
+        <div class="arch-node">
+          <span class="badge badge-live">3. Biophysical Engine</span>
+          <p class="muted" style="margin-top:8px;" data-i18n="arch_3">Penman-Monteith FAO-56, curvas de excedencia térmica, función de rinde FAO-33, calibración MAGyP y filtro Q0.05–Q0.95.</p>
+          <code>models/extremesModel.js</code>
+          <code>models/yieldModel.js</code>
+        </div>
+        <div class="arch-node">
+          <span class="badge badge-live">4. MCDA &amp; Views</span>
+          <p class="muted" style="margin-top:8px;" data-i18n="arch_4">Simula 12–72 meses en 3 sub-pasos, evalúa SAW-8/SAW-15/TOPSIS-15 y renderiza Leaflet, Turf.js, Chart.js y mini-tutoriales.</p>
+          <code>models/mcdaModel.js</code>
+          <code>views/index.ejs · public/js/client.js</code>
+        </div>
+      </div>
+
+      <div class="grid-2" style="margin-top:18px;">
+        <div class="card">
+          <h3 class="card-title-serif" data-i18n="dep_local_title">Ejecución local del sistema completo (Node.js)</h3>
+          <pre class="json-box" style="max-height:170px;">git clone https://github.com/GregorioNavarrete/field-shift-mvc-4.git
+cd field-shift-mvc-4
+npm install
+npm start
+# Aplicación activa en http://localhost:3000</pre>
+        </div>
+        <div class="card">
+          <h3 class="card-title-serif" data-i18n="dep_pages_title">Despliegue de este Explorador en GitHub Pages</h3>
+          <p class="muted" style="margin-bottom:10px;" data-i18n="dep_pages_desc">
+            1. Subir el repositorio a GitHub (rama <code>main</code>).<br/>
+            2. Ir a <strong>Settings → Pages → Build and deployment</strong>.<br/>
+            3. Elegir <strong>Deploy from a branch</strong> → Rama <code>main</code> → Carpeta <code>/docs</code>.<br/>
+            4. Esta página estática funciona sin servidor gracias a que NASA POWER, SoilGrids y Georef AR habilitan CORS abierto.
+          </p>
+          <span class="badge badge-mid" data-i18n="disclaimer_badge">Aviso: toda decisión agronómica requiere validación de un ingeniero agrónomo local.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div>
+        <h4>Field Shift v4.0 · Project UNSE</h4>
+        <p data-i18n="ft_desc">
+          Herramienta abierta de apoyo a la decisión en rotaciones agrícolas (Licencia Apache 2.0). Los resultados son inferencias modeladas para comparar alternativas y explorar riesgos climáticos; no reemplazan la prescripción profesional en campo.
+        </p>
+        <p style="margin-top:10px; font-size:12px; opacity:0.85;" data-i18n="ft_si">
+          Transparencia SI (Space Apps 2026): Se utilizó asistencia de modelos de lenguaje (Super Intelligence) en la estructuración de código y documentación técnica bajo supervisión estudiantil; sin uso ni alteración de logotipos NASA.
+        </p>
+      </div>
+      <div>
+        <h4 data-i18n="ft_refs">Referencias Científicas Clave</h4>
+        <ul style="list-style:none; line-height:1.85; font-size:12.5px;">
+          <li>Allen et al. (1998) — FAO Irrigation Paper No. 56</li>
+          <li>Doorenbos &amp; Kassam (1979) — FAO Paper No. 33</li>
+          <li>Poggio et al. (2021) — ISRIC SoilGrids 2.0 (SOIL)</li>
+          <li>Entekhabi et al. (2010) &amp; Reichle et al. (2019) — SMAP</li>
+          <li>Álvarez et al. (2017) · Pinto et al. (2017) · Bowles et al. (2020)</li>
+        </ul>
+      </div>
+      <div>
+        <h4 data-i18n="ft_links">Fuentes Oficiales</h4>
+        <ul style="list-style:none; line-height:1.85; font-size:12.5px;">
+          <li><a href="https://power.larc.nasa.gov/docs/" target="_blank" rel="noopener">NASA POWER Documentation</a></li>
+          <li><a href="https://nsidc.org/data/SPL4SMGP" target="_blank" rel="noopener">NASA NSIDC SMAP L4</a></li>
+          <li><a href="https://soilgrids.org/" target="_blank" rel="noopener">ISRIC SoilGrids v2.0</a></li>
+          <li><a href="https://siga.inta.gob.ar/" target="_blank" rel="noopener">INTA SIGA Argentina</a></li>
+          <li><a href="https://datos.gob.ar/" target="_blank" rel="noopener">Datos Abiertos MAGyP / Georef AR</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

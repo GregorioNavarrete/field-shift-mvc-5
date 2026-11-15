@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Field Shift v4.0 — Rotación Inteligente de Cultivos</title>
+
+  <!-- Tipografía Editorial (Cormorant Garamond + Inter según DESIGN.md) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+
+  <!-- Estilos Pastoral Editorial + Modo Oscuro -->
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+
+  <!-- FRANJA SUPERIOR VIVID LIME -->
+  <div class="lime-marquee" role="region" aria-label="Información científica">
+    <div class="marquee-track" id="marqueeTrack">
+      <span class="marquee-item" data-i18n="mq_1">✓ NASA Space Apps 2026 — Field Shift v4.0 (FAO-56 · FAO-33 · MCDA)</span>
+      <span class="marquee-item" data-i18n="mq_2">✓ NASA POWER Serie Diaria + SoilGrids Q0.05–Q0.95 + INTA SIGA + Sentinel-2 NDVI</span>
+      <span class="marquee-item" data-i18n="mq_3">✓ Filtro Aptitud · Auditoría SAW-15 · TOPSIS-15 · Monte Carlo (N=10.000)</span>
+      <span class="marquee-item" data-i18n="mq_4">✓ Licencia Abierta Apache 2.0 — Ciclos 1 a 6 Años &amp; Mini-Tutorial Interactivo</span>
+      <span class="marquee-item" data-i18n="mq_1">✓ NASA Space Apps 2026 — Field Shift v4.0 (FAO-56 · FAO-33 · MCDA)</span>
+      <span class="marquee-item" data-i18n="mq_2">✓ NASA POWER Serie Diaria + SoilGrids Q0.05–Q0.95 + INTA SIGA + Sentinel-2 NDVI</span>
+      <span class="marquee-item" data-i18n="mq_3">✓ Filtro Aptitud · Auditoría SAW-15 · TOPSIS-15 · Monte Carlo (N=10.000)</span>
+      <span class="marquee-item" data-i18n="mq_4">✓ Licencia Abierta Apache 2.0 — Ciclos 1 a 6 Años &amp; Mini-Tutorial Interactivo</span>
+    </div>
+  </div>
+
+  <!-- CABECERA FOREST INK -->
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="wizard-header-status">
+        <span class="step-pill-indicator" id="headerStepBadge" data-i18n="hdr_ready">Listo para iniciar cálculo</span>
+      </div>
+
+      <a href="#" class="brand-lockup" onclick="resetWizardToHome(event)">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 20L12 3L20 20H4Z" fill="#e8fe85"/>
+          <path d="M12 3V20" stroke="#07503f" stroke-width="1.8"/>
+        </svg>
+        <span>field shift</span>
+      </a>
+
+      <div class="header-actions">
+        <button id="btnReplayTutorial" class="btn-pill btn-outline-light btn-sm" onclick="startStepPointerTutorial(CLIENT_STATE.currentStep || 1, true)" style="display:none;" title="Repetir mini-tutorial con puntero">
+          🎯 <span data-i18n="btn_tour_hdr">Tutorial</span>
+        </button>
+        <button class="btn-pill btn-outline-light btn-sm" onclick="openConceptDirectoryModal()" title="Guía de criterios y fórmulas">
+          <span data-i18n="btn_guide_hdr">📘 Guía</span>
+        </button>
+        <button id="themeToggleBtn" class="btn-pill btn-outline-light btn-sm" onclick="toggleDarkMode()" aria-label="Cambiar modo oscuro">
+          🌙 <span data-i18n="btn_theme_dark">Oscuro</span>
+        </button>
+        <button id="langToggle" class="btn-pill btn-outline-light btn-sm" onclick="toggleLanguage()">ES | EN</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- PANTALLA DE INICIO -->
+  <section id="heroLanding" class="hero-section">
+    <span class="hero-eyebrow" data-i18n="hero_eyebrow">Observación Terrestre NASA · Decisión Agronómica Guiada</span>
+    <h1 class="hero-title" data-i18n="hero_title">Elegí la mejor rotación viendo exactamente qué cambia en tu suelo</h1>
+    <p class="hero-subtitle" data-i18n="hero_sub">
+      Un recorrido guiado en 4 pasos: delimitá tu lote con grilla NDVI real, elegí estado inicial y duración (1 a 6 años), diseñá tus estrategias con sus propias condiciones y obtené resultados explicados en cada dato.
+    </p>
+    <div class="hero-cta-group">
+      <button class="btn-pill btn-white btn-hero-start" onclick="startGuidedCalculation()" data-i18n="hero_start_btn">
+        Hacer un cálculo →
+      </button>
+    </div>
+  </section>
+
+  <!-- ESPACIO DE TRABAJO GUIADO -->
+  <main id="wizardWorkspace" class="wizard-workspace" style="display:none;">
+
+    <!-- BARRA DE PROGRESO -->
+    <div class="stepper-bar">
+      <div class="container stepper-inner">
+        <div class="step-node active" id="stepNode1">
+          <span class="step-num">1</span>
+          <span class="step-label" data-i18n="st_1">Lote y Mapa NDVI</span>
+        </div>
+        <div class="step-divider"></div>
+        <div class="step-node locked" id="stepNode2">
+          <span class="step-num">2</span>
+          <span class="step-label" data-i18n="st_2">Suelo y Estrategias</span>
+        </div>
+        <div class="step-divider"></div>
+        <div class="step-node locked" id="stepNode3">
+          <span class="step-num">3</span>
+          <span class="step-label" data-i18n="st_3">Línea de Tiempo</span>
+        </div>
+        <div class="step-divider"></div>
+        <div class="step-node locked" id="stepNode4">
+          <span class="step-num">4</span>
+          <span class="step-label" data-i18n="st_4">Resultados y Criterios</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======================================================================
+         PASO 1: DELIMITACIÓN DEL LOTE, NDVI POR CUADRO, CICLO (1-6 AÑOS) Y ESTADO INICIAL
+         ====================================================================== -->
+    <section id="wizardStep1" class="band band-bone wizard-step-panel">
+      <div class="container">
+        <div class="section-header">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+            <span class="section-kicker" style="margin-bottom:0;" data-i18n="s1_kicker">Paso 1 de 4 · Delimitación Espacial, NDVI Interno y Estado de Partida</span>
+            <button type="button" class="btn-eq" onclick="startStepPointerTutorial(1, true)">🎯 <span data-i18n="btn_mini_tut">Mini-tutorial del paso</span></button>
+          </div>
+          <h2 class="section-title" data-i18n="s1_title">Marcá los puntos de tu lote para inspeccionar el NDVI por cuadro e iniciar el ciclo</h2>
+          <p class="section-intro" data-i18n="s1_intro">
+            Hacé clic sobre la imagen satelital para marcar tu parcela (mínimo 3 puntos). Cada cuadro interno muestra su color y valor exacto de NDVI Sentinel-2 acorde al estado inicial del campo. Hacé clic en cualquier cuadro del mapa para ver su diagnóstico.
+          </p>
+        </div>
+
+        <div class="map-wrapper">
+          <div>
+            <div class="map-guide-strip">
+              <span data-i18n="s1_map_hint">Hacé clic en las esquinas del lote o tocá un cuadro interno de color para leer su NDVI exacto.</span>
+              <span id="vertexCountBadge" class="trust-badge trust-green"><span class="trust-dot"></span> 4 vértices</span>
+            </div>
+
+            <div id="map" aria-label="Mapa satelital interactivo con capa NDVI por cuadro"></div>
+
+            <div class="map-toolbar">
+              <button class="btn-pill btn-outline btn-sm" onclick="undoLastPoint()" data-i18n="btn_undo">↩ Quitar último punto</button>
+              <button class="btn-pill btn-outline btn-sm" onclick="clearPolygon()" data-i18n="btn_clear">Limpiar mapa</button>
+              <button class="btn-pill btn-outline btn-sm" onclick="loadGuaminiPreset(true)" data-i18n="btn_preset">Cargar Guaminí (100.000 m²)</button>
+            </div>
+
+            <!-- LEYENDA INTERACTIVA DE NDVI + DISTRIBUCIÓN DE CUADROS INTERNOS -->
+            <div class="ndvi-legend">
+              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
+                  <strong style="font-size:13px;" data-i18n="ndvi_title">Grilla NDVI Realista por Cuadro (Sentinel-2 — 10 m)</strong>
+                  <span id="meanNdviBadge" class="delta-pill delta-up">NDVI medio lote: 0,68</span>
+                </div>
+                <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                  <button class="btn-eq" id="toggleNdviNumbersBtn" onclick="toggleNdviNumbers()" data-i18n="btn_ndvi_nums_hide">🔢 Ocultar números</button>
+                  <button class="btn-eq" id="toggleNdviLayerBtn" onclick="toggleNdviOverlay()" data-i18n="btn_ndvi_hide">👁️ Ocultar capa NDVI</button>
+                  <button class="btn-eq" onclick="openInfoPopup('ndvi')">? <span data-i18n="btn_explain">¿Qué significa?</span></button>
+                </div>
+              </div>
+              <div class="ndvi-bar"></div>
+              <div class="ndvi-ticks">
+                <span data-i18n="ndvi_t0">0,00–0,19 Suelo desnudo (Terracota)</span>
+                <span data-i18n="ndvi_t1">0,20–0,44 Rastrojo/Baja (Ocre)</span>
+                <span data-i18n="ndvi_t2">0,45–0,69 Cultivo activo (Salvia)</span>
+                <span data-i18n="ndvi_t3">0,70+ Vigor pleno (Verde)</span>
+              </div>
+              <div id="ndviSpatialSummary" class="ndvi-spatial-summary"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+              <span class="trust-badge trust-green"><span class="trust-dot"></span> <span data-i18n="poly_ready">Polígono Validado</span></span>
+              <button class="btn-eq" onclick="openInfoPopup('area')">ƒx WGS84 · ?</button>
+            </div>
+
+            <div class="metric-pill-box">
+              <div class="metric-pill-label" data-i18n="lbl_area">Superficie Calculada del Lote</div>
+              <div class="metric-pill-value" id="areaM2Display">100.000 m²</div>
+              <div class="muted-sub" id="areaHaDisplay">10,00 hectáreas · 4 vértices</div>
+            </div>
+
+            <div class="metric-pill-box">
+              <div class="metric-pill-label" data-i18n="lbl_loc">Centroide y Jurisdicción (API Georef)</div>
+              <div style="font-size:15px; font-weight:600; margin-top:4px;" id="centroidDisplay">-36,805506° S, -62,026496° O</div>
+              <div class="muted-sub" id="jurisdictionDisplay"><%= initialData.envContext.georef.etiqueta %></div>
+            </div>
+
+            <div class="grid-2" style="gap:12px;">
+              <div class="form-group">
+                <label class="form-label">
+                  <span data-i18n="lbl_start_date">Inicio del ciclo</span>
+                </label>
+                <input type="date" id="startDateInput" class="form-control" value="2026-02-15" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">
+                  <span data-i18n="lbl_duration">Duración del ciclo</span>
+                  <button type="button" class="btn-help-inline" onclick="openInfoPopup('cycle_years')" title="Explicar duración de ciclos">?</button>
+                </label>
+                <select id="cycleYearsInput" class="form-control" onchange="onGlobalCycleYearsChange()">
+                  <option value="1" data-i18n="opt_1y">1 año (12 meses · Campaña)</option>
+                  <option value="2" selected data-i18n="opt_2y">2 años (24 meses)</option>
+                  <option value="3" data-i18n="opt_3y">3 años (36 meses · Trienal)</option>
+                  <option value="4" data-i18n="opt_4y">4 años (48 meses)</option>
+                  <option value="5" data-i18n="opt_5y">5 años (60 meses)</option>
+                  <option value="6" data-i18n="opt_6y">6 años (72 meses · Ciclo INTA)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom:10px;">
+              <label class="form-label">
+                <span data-i18n="lbl_prev_crop">Cultivo inicial o estado actual del campo</span>
+                <button type="button" class="btn-help-inline" onclick="openInfoPopup('prev_crop')" title="Explicar cultivo/estado inicial">?</button>
+              </label>
+              <select id="prevCropInput" class="form-control" onchange="onPrevCropChange()"></select>
+            </div>
+
+            <!-- TARJETA DINÁMICA QUE EXPLICA EL IMPACTO DEL ESTADO INICIAL EN EL LOTE Y EL NDVI -->
+            <div id="initialStateSummaryCard" class="init-state-preview-card"></div>
+          </div>
+        </div>
+
+        <!-- BARRA DE NAVEGACIÓN DEL PASO 1 -->
+        <div class="wizard-footer-nav">
+          <button class="btn-pill btn-outline" onclick="resetWizardToHome()" data-i18n="btn_back_home">← Volver al inicio</button>
+          <button class="btn-pill btn-forest" id="btnNextStep1" onclick="goToStep(2)" data-i18n="btn_to_s2">
+            Completar Paso 1 y seguir al Paso 2 →
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================================
+         PASO 2: DATOS DE APIS, PARÁMETROS BASE Y CONSTRUCTOR DE ESTRATEGIAS
+         ====================================================================== -->
+    <section id="wizardStep2" class="band band-bone wizard-step-panel" style="display:none;">
+      <div class="container">
+        <div class="section-header">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+            <span class="section-kicker" style="margin-bottom:0;" data-i18n="s2_kicker">Paso 2 de 4 · Datos Satelitales y Diseño de Estrategias</span>
+            <button type="button" class="btn-eq" onclick="startStepPointerTutorial(2, true)">🎯 <span data-i18n="btn_mini_tut">Mini-tutorial del paso</span></button>
+          </div>
+          <h2 class="section-title" data-i18n="s2_title">Revisá los datos NASA/INTA, ajustá tu lote y diseñá las estrategias a comparar</h2>
+          <p class="section-intro" data-i18n="s2_intro">
+            Consultamos las APIs abiertas para tu coordenada. Podés ajustar los datos base del lote y luego crear o editar cada estrategia candidata con su secuencia año por año y sus condiciones iniciales antes de enviar todo al motor matemático.
+          </p>
+        </div>
+
+        <!-- 4 TARJETAS SATELITALES CON BOTONES DE EXPLICACIÓN DETALLADA -->
+        <div class="grid-4" style="margin-bottom: 24px;">
+          <div class="card card-sage">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+              <span class="trust-badge trust-yellow" id="climaSourceBadge"><span class="trust-dot"></span> NASA POWER + SIGA</span>
+              <button class="btn-eq" onclick="openInfoPopup('et0')">? · ƒx ET₀</button>
+            </div>
+            <div class="card-kicker-lbl" data-i18n="card_rain_lbl">Lluvia y Demanda Calibrada</div>
+            <div class="card-big-val" id="rainCardVal"><%= initialData.envContext.clima.lluvia_anual_mm %> mm/año</div>
+            <p class="card-sub-txt" id="et0CardSub">ET₀ calibrada: <strong><%= initialData.envContext.clima.et0_anual_mm %> mm/año</strong>.</p>
+          </div>
+
+          <div class="card card-sky">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+              <span class="trust-badge trust-yellow" id="soilSourceBadge"><span class="trust-dot"></span> SoilGrids v2.0</span>
+              <button class="btn-eq" onclick="openInfoPopup('aw')">? · ƒx AW</button>
+            </div>
+            <div class="card-kicker-lbl" id="soilTaxSub"><%= initialData.envContext.suelo.taxonomia %></div>
+            <div class="card-big-val" id="awCardVal"><%= initialData.envContext.suelo.aw_mm_m.media %> mm/m</div>
+            <p class="card-sub-txt" id="awCardSub">IC 90%: <strong><%= initialData.envContext.suelo.aw_mm_m.q05 %>–<%= initialData.envContext.suelo.aw_mm_m.q95 %> mm/m</strong>.</p>
+          </div>
+
+          <div class="card card-peach">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+              <span class="trust-badge trust-green"><span class="trust-dot"></span> SMAP L4 + CONAE</span>
+              <button class="btn-eq" onclick="openInfoPopup('smap')">? · ƒx Radar</button>
+            </div>
+            <div class="card-kicker-lbl" data-i18n="card_smap_lbl">Humedad Radicular Inicial</div>
+            <div class="card-big-val" id="smapCardVal">0,21 m³/m³</div>
+            <p class="card-sub-txt" id="smapCardSub" data-i18n="card_smap_sub">Carga hídrica inicial del 62% en 0–100 cm.</p>
+          </div>
+
+          <div class="card card-ash">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+              <span class="trust-badge trust-green"><span class="trust-dot"></span> MAGyP / INDEC</span>
+              <button class="btn-eq" onclick="openInfoPopup('magyp')">? · ƒx Riesgo</button>
+            </div>
+            <div class="card-kicker-lbl" data-i18n="card_magyp_lbl">Estabilidad Rindes 10 años</div>
+            <div class="card-big-val">CV 17%–34%</div>
+            <p class="card-sub-txt" data-i18n="card_magyp_sub">Sorgo: 5.400 kg/ha (CV 17%). Maíz: 6.900 kg/ha.</p>
+          </div>
+        </div>
+
+        <!-- PARÁMETROS BASE DEL LOTE -->
+        <div class="card" style="margin-bottom: 24px;">
+          <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-bottom:20px;">
+            <div>
+              <h3 class="card-title-serif" data-i18n="s2_form_title">Parámetros Base del Lote y Manejo del Agricultor</h3>
+              <p class="muted-sub" data-i18n="s2_form_sub">Valores globales por defecto (cada estrategia puede heredarlos o definir los suyos abajo).</p>
+            </div>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+              <span id="calibrationStatusBadge" class="trust-badge trust-yellow"><span class="trust-dot"></span> <span data-i18n="badge_sat_mode">Modo Satélite (IC 90%)</span></span>
+              <button class="btn-pill btn-outline btn-sm" onclick="resetLocalOverrides()" data-i18n="btn_reset_sat">Restaurar satélite</button>
+            </div>
+          </div>
+
+          <div class="grid-3">
+            <div class="form-group">
+              <label class="form-label">
+                <span data-i18n="inp_aw">Agua Disponible Perfil (mm/m)</span>
+                <button type="button" class="btn-help-inline" onclick="openInfoPopup('aw')">?</button>
+              </label>
+              <input type="number" id="inputAW" class="form-control no-wheel" value="130" min="50" max="240" onchange="markLocalOverride()" />
+              <span class="field-impact-hint" data-i18n="hint_aw">Modifica: Capacidad del tanque hídrico y C2.</span>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">
+                <span data-i18n="inp_moist">Humedad Inicial del Suelo (%)</span>
+                <button type="button" class="btn-help-inline" onclick="openInfoPopup('smap')">?</button>
+              </label>
+              <input type="number" id="inputInitMoisture" class="form-control no-wheel" value="62" min="15" max="100" onchange="markLocalOverride()" />
+              <span class="field-impact-hint" data-i18n="hint_moist">Modifica: Reserva de agua en el Mes 1.</span>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">
+                <span data-i18n="inp_soc">Carbono Orgánico Lab (g/kg)</span>
+                <button type="button" class="btn-help-inline" onclick="openInfoPopup('soc_gei')">?</button>
+              </label>
+              <input type="number" step="0.1" id="inputSOC" class="form-control no-wheel" value="18.4" min="5" max="50" onchange="markLocalOverride()" />
+              <span class="field-impact-hint" data-i18n="hint_soc">Modifica: Línea base SOC y reduce error en C3.</span>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">
+                <span data-i18n="inp_tosca">Profundidad útil / Tosca (cm)</span>
+                <button type="button" class="btn-help-inline" onclick="openInfoPopup('aw')">?</button>
+              </label>
+              <select id="inputTosca" class="form-control" onchange="markLocalOverride()">
+                <option value="100" selected data-i18n="opt_tosca_100">Sin limitante (&gt; 100 cm perfil útil)</option>
+                <option value="75" data-i18n="opt_tosca_75">Tosca moderada a 75 cm (-25% agua útil)</option>
+                <option value="50" data-i18n="opt_tosca_50">Tosca somera a 50 cm (-50% agua útil)</option>
+              </select>
+              <span class="field-impact-hint" data-i18n="hint_tosca">Modifica: Lámina máxima almacenada.</span>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">
+                <span data-i18n="inp_tenure">Tenencia de la tierra</span>
+                <button type="button" class="btn-help-inline" onclick="openCriterionPopup('C8')">?</button>
+              </label>
+              <select id="inputTenure" class="form-control">
+                <option value="propietario" selected data-i18n="opt_owner">Propietario (equilibrio suelo + rinde)</option>
+                <option value="arrendatario" data-i18n="opt_tenant">Arrendatario 1–2 años (prioriza caja rápida)</option>
+              </select>
+              <span class="field-impact-hint" data-i18n="hint_tenure">Modifica: Peso de liquidez (C8 y C15).</span>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">
+                <span data-i18n="inp_mach">Maquinaria y Destino Forrajero</span>
+                <button type="button" class="btn-help-inline" onclick="openCriterionPopup('C14')">?</button>
+              </label>
+              <select id="inputMachinery" class="form-control">
+                <option value="contratista_grano" selected data-i18n="opt_mach_grain">Contratista agrícola (solo cosecha grano)</option>
+                <option value="mixto_hacienda" data-i18n="opt_mach_livestock">Con ganadería / rollos propios</option>
+                <option value="equipo_propio" data-i18n="opt_mach_own">Equipo propio con rolo faca</option>
+              </select>
+              <span class="field-impact-hint" data-i18n="hint_mach">Modifica: Viabilidad de pastura y sorgo (C8/C14).</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- NUEVA SECCIÓN: CONSTRUCTOR E INTERFAZ DE ESTRATEGIAS DEL PASO 2 -->
+        <div class="card card-sage" id="strategyBuilderSection">
+          <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:flex-start; gap:14px; margin-bottom:16px;">
+            <div>
+              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <span class="section-kicker" style="margin-bottom:0;" data-i18n="sb_kicker">Constructor de Estrategias a Evaluar</span>
+                <span id="strategyCountBadge" class="trust-badge trust-green"><span class="trust-dot"></span> 6 estrategias listas</span>
+              </div>
+              <h3 class="card-title-serif" style="margin-top:4px;" data-i18n="sb_title">Creá o editá cada estrategia con su secuencia y situación inicial antes de analizar</h3>
+              <p class="muted-sub" data-i18n="sb_sub">
+                Cada tarjeta representa una estrategia que se enviará al motor SAW-15 / TOPSIS-15. Podés modificar sus cultivos año a año (Invierno/Verano), cambiar su duración o darle condiciones iniciales propias (humedad, labranza, tosca, SOC).
+              </p>
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+              <button class="btn-eq" onclick="openInfoPopup('strategy_builder')">? <span data-i18n="btn_explain">¿Cómo funciona?</span></button>
+              <button class="btn-pill btn-outline btn-sm" onclick="restoreDefaultStrategies()" data-i18n="sb_btn_restore">↺ Restaurar Base</button>
+              <button class="btn-pill btn-forest btn-sm" onclick="openStrategyEditor(null)" data-i18n="sb_btn_add">+ Crear Nueva Estrategia</button>
+            </div>
+          </div>
+
+          <!-- PLANTILLAS RÁPIDAS -->
+          <div class="sb-templates-bar">
+            <span style="font-size:12px; font-weight:600;" data-i18n="sb_tpl_lbl">Agregar plantilla rápida:</span>
+            <button class="btn-eq" onclick="addQuickStrategyTemplate('regenerative_6y')" data-i18n="sb_tpl_1">+ Regenerativa 6 Años (Mixta)</button>
+            <button class="btn-eq" onclick="addQuickStrategyTemplate('girasol_trigo_3y')" data-i18n="sb_tpl_2">+ Trigo / Girasol / Nabo (3 Años)</button>
+            <button class="btn-eq" onclick="addQuickStrategyTemplate('mani_centeno_2y')" data-i18n="sb_tpl_3">+ Maní + Centeno Protector (2 Años)</button>
+            <button class="btn-eq" onclick="addQuickStrategyTemplate('convencional_testigo')" data-i18n="sb_tpl_4">+ Contraste Labranza Convencional</button>
+          </div>
+
+          <!-- GRILLA DE ESTRATEGIAS CONFIGURADAS -->
+          <div class="grid-2" id="step2StrategiesList" style="margin-top:16px;"></div>
+        </div>
+
+        <!-- BARRA DE NAVEGACIÓN DEL PASO 2 -->
+        <div class="wizard-footer-nav">
+          <button class="btn-pill btn-outline" onclick="goToStep(1)" data-i18n="btn_back_s1">← Volver al Paso 1 (Editar lote)</button>
+          <button class="btn-pill btn-forest" id="btnSubmitStrategiesAnalyze" onclick="submitStrategiesAndAnalyze()" data-i18n="btn_to_s3">
+            Mandar todo a analizar y ver Simulación (Paso 3) →
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================================
+         PASO 3: LÍNEA DE TIEMPO INTERACTIVA CON POPUPS EN CADA KPI
+         ====================================================================== -->
+    <section id="wizardStep3" class="band band-bone wizard-step-panel" style="display:none;">
+      <div class="container">
+        <div class="section-header">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+            <span class="section-kicker" style="margin-bottom:0;" data-i18n="s3_kicker">Paso 3 de 4 · Simulación Temporal Mes a Mes</span>
+            <button type="button" class="btn-eq" onclick="startStepPointerTutorial(3, true)">🎯 <span data-i18n="btn_mini_tut">Mini-tutorial del paso</span></button>
+          </div>
+          <h2 class="section-title" data-i18n="s3_title">Línea de tiempo interactiva con estados intermedios y explicación al pie</h2>
+          <p class="section-intro" data-i18n="s3_intro">
+            Inspeccioná cada estrategia analizada mes a mes. Hacé clic en cualquier mes o en el botón (?) de cualquier indicador para entender exactamente qué mide y cómo se calcula.
+          </p>
+        </div>
+
+        <div class="card">
+          <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px;">
+            <div class="strategy-pills" id="timelineStrategyPills" style="margin-bottom:0;"></div>
+
+            <label class="compare-toggle-pill">
+              <input type="checkbox" id="compareBaselineCheck" checked onchange="renderTimelineSection()" />
+              <span data-i18n="chk_compare_e0">Comparar agua útil vs. Testigo Base</span>
+            </label>
+          </div>
+
+          <div class="timeline-chart-container">
+            <canvas id="timelineChartCanvas" height="105"></canvas>
+          </div>
+
+          <div class="timeline-playback-bar">
+            <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+              <button class="btn-pill btn-outline btn-sm" onclick="stepTimelineMonth(-1)" data-i18n="btn_prev_m">◀ Mes anterior</button>
+              <button class="btn-pill btn-forest btn-sm" id="playTimelineBtn" onclick="toggleTimelinePlayback()" data-i18n="btn_play_m">▶ Recorrer ciclo automáticamente</button>
+              <button class="btn-pill btn-outline btn-sm" onclick="stepTimelineMonth(1)" data-i18n="btn_next_m">Mes siguiente ▶</button>
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:12px; font-size:12px;">
+              <span style="display:inline-flex; align-items:center; gap:5px;"><span class="legend-dot state-commercial"></span> <span data-i18n="leg_comm">Cultivo comercial</span></span>
+              <span style="display:inline-flex; align-items:center; gap:5px;"><span class="legend-dot state-cover"></span> <span data-i18n="leg_cov">Cobertura viva</span></span>
+              <span style="display:inline-flex; align-items:center; gap:5px;"><span class="legend-dot state-stubble"></span> <span data-i18n="leg_stub">Rastrojo</span></span>
+              <span style="display:inline-flex; align-items:center; gap:5px;"><span class="legend-dot state-bare"></span> <span data-i18n="leg_bare">Suelo desnudo</span></span>
+            </div>
+          </div>
+
+          <div class="month-track-grid" id="monthTrackGrid"></div>
+
+          <!-- INSPECTOR AL PIE DEL GRÁFICO -->
+          <div class="footnote-inspector" id="footnoteInspector">
+            <div class="footnote-header">
+              <div>
+                <span class="section-kicker" style="margin-bottom:2px;" data-i18n="fn_kicker">Detalle del Mes Seleccionado · Explicación al Pie</span>
+                <h3 class="footnote-title" id="fnTitle">Mes 1</h3>
+              </div>
+              <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                <span id="fnStateBadge" class="trust-badge trust-green"><span class="trust-dot"></span> Cobertura Viva Activa</span>
+                <button class="btn-eq" onclick="openInfoPopup('timeline')" data-i18n="btn_fn_eq">? · ƒx Fórmulas del mes</button>
+              </div>
+            </div>
+
+            <div class="water-tank-banner" id="waterTankBanner"></div>
+            <div class="kpi-grid-8" id="fnKpiGrid"></div>
+            <div class="footnote-prose" id="fnProse"></div>
+          </div>
+        </div>
+
+        <!-- BARRA DE NAVEGACIÓN DEL PASO 3 -->
+        <div class="wizard-footer-nav">
+          <button class="btn-pill btn-outline" onclick="goToStep(2)" data-i18n="btn_back_s2">← Volver al Paso 2 (Editar Estrategias)</button>
+          <button class="btn-pill btn-forest" onclick="goToStep(4)" data-i18n="btn_to_s4">
+            Seguir a Gráficos y Conclusiones (Paso 4) →
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================================
+         PASO 4: GRÁFICOS, MATRIZ AUDITADA Y POPUPS POR CADA CRITERIO/RESULTADO
+         ====================================================================== -->
+    <section id="wizardStep4" class="band band-bone wizard-step-panel" style="display:none;">
+      <div class="container">
+        <div class="section-header">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+            <span class="section-kicker" style="margin-bottom:0;" data-i18n="s4_kicker">Paso 4 de 4 · Resultados Auditados, Escenarios y Popups Explicativos</span>
+            <button type="button" class="btn-eq" onclick="startStepPointerTutorial(4, true)">🎯 <span data-i18n="btn_mini_tut">Mini-tutorial del paso</span></button>
+          </div>
+          <h2 class="section-title" data-i18n="s4_title">Gráficos comparativos, prueba de estrés climático y explicación de cada resultado</h2>
+          <p class="section-intro" data-i18n="s4_intro">
+            Evaluá el ranking final SAW-15, SAW-8 y TOPSIS-15. Hacé clic en cualquier criterio o puntaje de la tabla para abrir un popup explicando qué significa en palabras simples, su ecuación exacta y cómo mejorar ese puntaje.
+          </p>
+        </div>
+
+        <!-- SIMULADOR DE ESCENARIOS ESPECIALES -->
+        <div class="card card-sage" style="margin-bottom: 24px;">
+          <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-bottom:16px;">
+            <strong style="font-size:14px;" data-i18n="scen_prompt">Probar escenario climático o económico especial:</strong>
+            <span id="scenarioActiveLabel" class="scenario-pill-active">Clima Normal (Base)</span>
+          </div>
+
+          <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:20px;">
+            <button class="btn-pill btn-forest btn-sm preset-btn" id="btnPresetNormal" onclick="applyPresetScenario('normal')" data-i18n="sc_normal">Clima Normal (Base)</button>
+            <button class="btn-pill btn-outline btn-sm preset-btn" id="btnPresetNina" onclick="applyPresetScenario('nina')" data-i18n="sc_nina">Sequía La Niña (-30% lluvia · +2°C)</button>
+            <button class="btn-pill btn-outline btn-sm preset-btn" id="btnPresetNino" onclick="applyPresetScenario('nino')" data-i18n="sc_nino">Evento El Niño (+30% lluvia)</button>
+            <button class="btn-pill btn-outline btn-sm preset-btn" id="btnPresetCrisis" onclick="applyPresetScenario('crisis')" data-i18n="sc_crisis">Crisis Económica (-20% grano · +40% urea)</button>
+          </div>
+
+          <div class="grid-4">
+            <div class="slider-card-mini">
+              <label class="form-label"><span data-i18n="sl_rain">Perturbación Lluvia</span><strong id="rainValLabel">0%</strong></label>
+              <input type="range" id="sliderRain" class="no-wheel" min="-30" max="30" step="5" value="0" oninput="onSliderChange()" />
+              <span class="field-impact-hint" data-i18n="sl_rain_h">Modifica: C1 (Agua) y C15 (Riesgo).</span>
+            </div>
+            <div class="slider-card-mini">
+              <label class="form-label"><span data-i18n="sl_temp">Anomalía Térmica</span><strong id="tempValLabel">+0,0 °C</strong></label>
+              <input type="range" id="sliderTemp" class="no-wheel" min="0" max="3" step="0.5" value="0" oninput="onSliderChange()" />
+              <span class="field-impact-hint" data-i18n="sl_temp_h">Modifica: C7 (Calor) y C1 (ETc).</span>
+            </div>
+            <div class="slider-card-mini">
+              <label class="form-label"><span data-i18n="sl_wwater">Prioridad Agua</span><strong id="wWaterLabel">30%</strong></label>
+              <input type="range" id="sliderWWater" class="no-wheel" min="10" max="60" step="5" value="30" oninput="onSliderChange()" />
+              <span class="field-impact-hint" data-i18n="sl_wwater_h">Modifica pesos: C1, C2, C7, C9.</span>
+            </div>
+            <div class="slider-card-mini">
+              <label class="form-label"><span data-i18n="sl_wecon">Prioridad Caja</span><strong id="wEconLabel">20%</strong></label>
+              <input type="range" id="sliderWEcon" class="no-wheel" min="5" max="60" step="5" value="20" oninput="onSliderChange()" />
+              <span class="field-impact-hint" data-i18n="sl_wecon_h">Modifica pesos: C8, C14, C15.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- CONCLUSIONES EJECUTIVAS DINÁMICAS -->
+        <div class="card card-emphasis" style="margin-bottom: 24px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+            <span class="section-kicker" data-i18n="conc_kicker">Síntesis Agronómica Auditada</span>
+            <button class="btn-eq" onclick="openInfoPopup('general')">? <span data-i18n="btn_explain_res">¿Cómo leer estos resultados?</span></button>
+          </div>
+          <h3 class="card-title-serif" style="margin-bottom:14px;" data-i18n="conc_title">Conclusiones y recomendación para tu parcela</h3>
+          <div class="grid-3" id="dynamicConclusionsGrid"></div>
+        </div>
+
+        <!-- PODIO EN VIVO -->
+        <div class="grid-3" id="livePodiumGrid" style="margin-bottom: 24px;"></div>
+
+        <!-- GRÁFICO COMPARATIVO SAW-15 VS TOPSIS-15 -->
+        <div class="card" style="margin-bottom: 24px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+            <h3 class="card-title-serif" data-i18n="chart_rank_title">Gráfico Comparativo: Puntaje Ponderado (SAW-15) vs. No Compensatorio (TOPSIS-15)</h3>
+            <button class="btn-eq" onclick="openInfoPopup('mcda')" data-i18n="btn_audit_mcda">? · ƒx Auditar fórmulas SAW, TOPSIS y Monte Carlo</button>
+          </div>
+          <canvas id="rankingChartCanvas" height="82"></canvas>
+        </div>
+
+        <!-- TABLA MATRIZ COMPLETA AUDITADA DE 15 CRITERIOS (CADA FILA Y CELDA CON POPUP) -->
+        <div class="card" style="margin-bottom: 12px; padding: 14px 20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+            <span style="font-size:13px;" data-i18n="tbl_click_hint">💡 Tip interactivo: Hacé clic en cualquier criterio (C1–C15), puntaje de la tabla o fila final (SAW-8 / SAW-15 / TOPSIS) para abrir su explicación detallada.</span>
+            <button class="btn-eq" onclick="openConceptDirectoryModal()" data-i18n="btn_all_crit">📘 Ver los 15 criterios juntos</button>
+          </div>
+        </div>
+        <div class="table-wrap" style="margin-bottom: 24px;">
+          <table id="mcdaTable">
+            <thead id="mcdaTableHead"></thead>
+            <tbody id="mcdaTableBody"></tbody>
+          </table>
+        </div>
+
+        <!-- CATÁLOGO DE ESPECIES -->
+        <div class="card card-ash" style="margin-bottom: 24px;">
+          <h3 class="card-title-serif" style="margin-bottom:14px;" data-i18n="cat_title">Parámetros Fisiológicos de las Especies Evaluadas</h3>
+          <div class="grid-3" id="cropCatalogGrid"></div>
+        </div>
+
+        <!-- BARRA DE NAVEGACIÓN DEL PASO 4 -->
+        <div class="wizard-footer-nav">
+          <button class="btn-pill btn-outline" onclick="goToStep(3)" data-i18n="btn_back_s3">← Volver al Paso 3 (Línea de Tiempo)</button>
+          <button class="btn-pill btn-forest" onclick="resetWizardToHome()" data-i18n="btn_restart">↻ Iniciar nuevo cálculo</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="site-footer">
+    <div class="footer-grid">
+      <div>
+        <div class="brand-lockup" style="margin-bottom:16px;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <path d="M4 20L12 3L20 20H4Z" fill="#e8fe85"/>
+          </svg>
+          <span>field shift</span>
+        </div>
+        <p style="font-size:14px; opacity:0.85; max-width:42ch;" data-i18n="ft_desc">
+          Herramienta abierta de apoyo a la decisión agronómica bajo cambio climático (Apache 2.0). Desafío NASA Space Apps 2026. Toda decisión de manejo debe validarse con un ingeniero agrónomo matriculado.
+        </p>
+      </div>
+      <div>
+        <strong style="display:block; margin-bottom:12px; color:var(--vivid-lime); font-size:13px; text-transform:uppercase;" data-i18n="ft_apis">APIs Integradas</strong>
+        <ul style="list-style:none; font-size:13px; opacity:0.88; line-height:2;">
+          <li>NASA POWER API (Climatología AG)</li>
+          <li>ISRIC SoilGrids v2.0 (Cuantiles Q0.05–Q0.95)</li>
+          <li>ESA Sentinel-2 NDVI (10 m) &amp; SMAP L4</li>
+          <li>INTA SIGA · GeoINTA · CONAE · MAGyP</li>
+        </ul>
+      </div>
+      <div>
+        <strong style="display:block; margin-bottom:12px; color:var(--vivid-lime); font-size:13px; text-transform:uppercase;" data-i18n="ft_arch">Arquitectura MVC v4.0</strong>
+        <ul style="list-style:none; font-size:13px; opacity:0.88; line-height:2;">
+          <li>Backend: Node.js + Express + EJS</li>
+          <li>Física: Penman-Monteith FAO-56 + FAO-33</li>
+          <li>Geodesia: Leaflet.js + Turf.js + Chart.js</li>
+          <li>Motor: SAW-15 · TOPSIS-15 · Extremos POWER</li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <!-- OVERLAY MINI-TUTORIAL ANIMADO CON PUNTERO GUIADO (PASOS 1 A 4) -->
+  <div id="pointerTutorialOverlay" class="pointer-tutorial-overlay" aria-live="polite" style="display:none;">
+    <div id="pointerTargetRing" class="pointer-target-ring"></div>
+
+    <div id="pointerVirtualCursor" class="pointer-virtual-cursor" aria-hidden="true">
+      <div class="pointer-click-pulse"></div>
+      <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+        <path d="M5 3L25 14.5L15.8 17.5L12.5 27L5 3Z" fill="#e8fe85" stroke="#07503f" stroke-width="2.2" stroke-linejoin="round"/>
+      </svg>
+    </div>
+
+    <div id="pointerTutorialCard" class="pointer-tutorial-card" role="region" aria-label="Mini-tutorial guiado">
+      <div class="pt-card-head">
+        <span id="ptStepBadge" class="trust-badge trust-green"><span class="trust-dot"></span> Paso 1 · 1/4</span>
+        <button type="button" class="btn-eq pt-skip-btn" onclick="skipStepPointerTutorial()" data-i18n="pt_skip">Saltar tutorial ✕</button>
+      </div>
+      <h4 id="ptTitle" class="pt-title"></h4>
+      <p id="ptDesc" class="pt-desc"></p>
+      <div class="pt-footer">
+        <div id="ptDots" class="pt-dots"></div>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <button type="button" class="btn-eq" id="ptPrevBtn" onclick="prevStepPointerTutorial()">◀</button>
+          <button type="button" class="btn-pill btn-forest btn-sm" id="ptNextBtn" onclick="nextStepPointerTutorial()" data-i18n="pt_next">Siguiente ▶</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE AUDITORÍA Y EXPLICACIÓN DE DATOS / CRITERIOS / RESULTADOS -->
+  <div class="modal-backdrop" id="equationModal" role="dialog" aria-modal="true" onclick="if(event.target===this) closeEquationModal()">
+    <div class="modal-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:8px;">
+        <span class="trust-badge trust-green"><span class="trust-dot"></span> <span id="modalBadgeText" data-i18n="mod_badge">Explicación y Auditoría Matemática · Caja Blanca</span></span>
+        <button class="btn-pill btn-outline btn-sm" onclick="closeEquationModal()" data-i18n="btn_close">Cerrar ✕</button>
+      </div>
+      <h3 id="modalEqTitle" class="modal-title-serif"></h3>
+      <div id="modalPlainBox" class="modal-plain-box"></div>
+      <div id="modalContextScoreBox" class="modal-context-box" style="display:none;"></div>
+      <div class="formula-block" id="modalEqFormula"></div>
+      <div id="modalInterpBox" class="modal-interp-box"></div>
+      <p id="modalEqSource" class="muted-sub" style="margin-top:10px;"></p>
+    </div>
+  </div>
+
+  <!-- MODAL CONSTRUCTOR / EDITOR DE ESTRATEGIA (PASO 2) -->
+  <div class="modal-backdrop" id="strategyEditorModal" role="dialog" aria-modal="true" onclick="if(event.target===this) closeStrategyEditor()">
+    <div class="modal-card modal-card-wide">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; gap:8px;">
+        <span class="trust-badge trust-green"><span class="trust-dot"></span> <span data-i18n="se_badge">Configurador de Estrategia Agronómica</span></span>
+        <button class="btn-pill btn-outline btn-sm" onclick="closeStrategyEditor()" data-i18n="btn_close">Cerrar ✕</button>
+      </div>
+      <h3 id="seModalTitle" class="modal-title-serif" data-i18n="se_title_new">Configurar Estrategia de Rotación</h3>
+
+      <div class="grid-3" style="margin-top:14px;">
+        <div class="form-group">
+          <label class="form-label" data-i18n="se_lbl_short">Código corto (ej. E6)</label>
+          <input type="text" id="seShortInput" class="form-control" maxlength="22" placeholder="E6 Mix" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" data-i18n="se_lbl_name">Nombre descriptivo</label>
+          <input type="text" id="seNameInput" class="form-control" maxlength="90" placeholder="Ej: Girasol → Centeno+Vicia → Maíz" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" data-i18n="se_lbl_years">Duración de esta estrategia</label>
+          <select id="seYearsInput" class="form-control" onchange="renderStrategyEditorSequenceRows()">
+            <option value="1">1 año (12 meses)</option>
+            <option value="2">2 años (24 meses)</option>
+            <option value="3">3 años (36 meses)</option>
+            <option value="4">4 años (48 meses)</option>
+            <option value="5">5 años (60 meses)</option>
+            <option value="6">6 años (72 meses)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- SECUENCIA AÑO POR AÑO -->
+      <div class="se-section-box">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+          <strong style="font-size:13px;" data-i18n="se_seq_title">1. Secuencia de Cultivos Año por Año (Otoño-Invierno y Primavera-Verano)</strong>
+          <span class="muted-sub" data-i18n="se_seq_sub">Elegí qué cubre el lote en invierno y qué cultivo comercial sembrás en verano.</span>
+        </div>
+        <div id="seSequenceRowsContainer" class="se-sequence-grid"></div>
+      </div>
+
+      <!-- CONDICIONES INICIALES PROPIAS DE ESTA ESTRATEGIA -->
+      <div class="se-section-box" style="margin-top:14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+          <strong style="font-size:13px;" data-i18n="se_init_title">2. Datos y Situación Inicial Propia de esta Estrategia</strong>
+          <label class="compare-toggle-pill" style="padding:5px 12px;">
+            <input type="checkbox" id="seUseGlobalInitCheck" checked onchange="toggleStrategyInitFields()" />
+            <span data-i18n="se_chk_global">Heredar parámetros base del lote (Paso 1 y 2)</span>
+          </label>
+        </div>
+
+        <div id="seCustomInitFieldsGrid" class="grid-3">
+          <div class="form-group">
+            <label class="form-label" data-i18n="se_inp_prev">Estado / Cultivo Inicial</label>
+            <select id="sePrevCropInput" class="form-control"></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="se_inp_til">Sistema de Labranza</label>
+            <select id="seTillageInput" class="form-control">
+              <option value="siembra_directa" data-i18n="opt_til_sd">Siembra Directa continua</option>
+              <option value="labranza_vertical" data-i18n="opt_til_vert">Labranza vertical / cincel ocasional</option>
+              <option value="convencional" data-i18n="opt_til_conv">Labranza convencional (reja/rastra)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="se_inp_moist">Humedad Inicial (%)</label>
+            <input type="number" id="seMoistureInput" class="form-control no-wheel" min="15" max="100" value="62" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="se_inp_aw">Agua Disponible AW (mm/m)</label>
+            <input type="number" id="seAwInput" class="form-control no-wheel" min="50" max="240" value="130" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="se_inp_soc">SOC Inicial (g/kg)</label>
+            <input type="number" step="0.1" id="seSocInput" class="form-control no-wheel" min="5" max="50" value="18.4" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" data-i18n="se_inp_tosca">Profundidad útil / Tosca (cm)</label>
+            <select id="seToscaInput" class="form-control">
+              <option value="100">Sin limitante (&gt; 100 cm)</option>
+              <option value="75">Tosca moderada (75 cm)</option>
+              <option value="50">Tosca somera (50 cm)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="wizard-footer-nav" style="margin-top:20px; padding-top:16px;">
+        <button class="btn-pill btn-outline" onclick="closeStrategyEditor()" data-i18n="btn_cancel">Cancelar</button>
+        <button class="btn-pill btn-forest" onclick="saveStrategyFromEditor()" data-i18n="se_btn_save">Guardar Estrategia en Comparativa ✓</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DIRECTORIO DE LOS 15 CRITERIOS Y CONCEPTOS -->
+  <div class="modal-backdrop" id="conceptDirectoryModal" role="dialog" aria-modal="true" onclick="if(event.target===this) closeConceptDirectoryModal()">
+    <div class="modal-card modal-card-wide">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:8px;">
+        <span class="trust-badge trust-green"><span class="trust-dot"></span> <span data-i18n="dir_badge">Glosario Científico-Agronómico Completo</span></span>
+        <button class="btn-pill btn-outline btn-sm" onclick="closeConceptDirectoryModal()" data-i18n="btn_close">Cerrar ✕</button>
+      </div>
+      <h3 class="modal-title-serif" data-i18n="dir_title">¿Qué significa cada dato, criterio (C1–C15) y método matemático?</h3>
+      <p class="muted-sub" style="margin-bottom:14px;" data-i18n="dir_sub">Explorá cada criterio y concepto en lenguaje simple con su ecuación exacta y fuente oficial NASA/INTA.</p>
+      <div id="conceptDirectoryBody" class="dir-cards-grid"></div>
+    </div>
+  </div>
+
+  <!-- Datos iniciales inyectados desde Express -->
+  <script>
+    window.__INITIAL_DATA__ = <%- JSON.stringify(initialData) %>;
+  </script>
+
+  <!-- Librerías Frontend -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+  <!-- Lógica Interactiva Cliente v3.0 -->
+  <script src="/js/client.js"></script>
+</body>
+</html>

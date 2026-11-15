@@ -1,0 +1,26 @@
+{
+  "name": "field-shift-mvc-4",
+  "version": "4.0.0",
+  "description": "Field Shift v4.0: Herramienta MVC de apoyo a la decisión para rotaciones agrícolas con Penman-Monteith FAO-56, FAO-33 y Mini-Tutorial guiado (NASA Space Apps 2026)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "nasa-space-apps",
+    "agroclimatology",
+    "crop-rotation",
+    "mcda",
+    "topsis",
+    "express-mvc"
+  ],
+  "license": "Apache-2.0",
+  "dependencies": {
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "ejs": "^3.1.10",
+    "express": "^4.19.2"
+  }
+}
